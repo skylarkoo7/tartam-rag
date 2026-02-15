@@ -4,14 +4,16 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from .db import RetrievedUnit
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
 except Exception:  # pragma: no cover - optional in local tests
     genai = None
+    genai_types = None
 
 
 def _hash_embedding(text: str, dim: int = 256) -> list[float]:
@@ -36,29 +38,56 @@ class GeminiClient:
         self.api_key = api_key
         self.chat_model = chat_model
         self.embedding_model = embedding_model
-        self.enabled = bool(api_key and genai)
         self._page_ocr_cache: dict[str, str] = {}
+        self.client: Any | None = None
 
-        if self.enabled:
-            genai.configure(api_key=api_key)
+        if api_key and genai:
+            try:
+                self.client = genai.Client(api_key=api_key)
+            except Exception:
+                self.client = None
+
+        self.enabled = self.client is not None
 
     def embed(self, text: str) -> list[float]:
         text = text.strip()
         if not text:
             return _hash_embedding("empty")
 
-        if not self.enabled:
+        if not self.enabled or self.client is None:
             return _hash_embedding(text)
 
         try:
-            resp = genai.embed_content(model=self.embedding_model, content=text)
-            values = resp["embedding"]
+            resp = self.client.models.embed_content(model=self.embedding_model, contents=text)
+            values = self._extract_embedding_values(resp)
+            if not values:
+                return _hash_embedding(text)
             return [float(v) for v in values]
         except Exception:
             return _hash_embedding(text)
 
     def embed_many(self, texts: Iterable[str]) -> list[list[float]]:
-        return [self.embed(text) for text in texts]
+        items = [text.strip() for text in texts]
+        if not items:
+            return []
+
+        if not self.enabled or self.client is None:
+            return [_hash_embedding(text or "empty") for text in items]
+
+        vectors: list[list[float]] = []
+        batch_size = 64
+        for start in range(0, len(items), batch_size):
+            batch = items[start : start + batch_size]
+            try:
+                response = self.client.models.embed_content(model=self.embedding_model, contents=batch)
+                matrix = self._extract_embedding_matrix(response)
+                if len(matrix) != len(batch):
+                    raise ValueError("Embedding batch size mismatch")
+                vectors.extend(matrix)
+            except Exception:
+                vectors.extend([_hash_embedding(text or "empty") for text in batch])
+
+        return vectors
 
     def plan_query(
         self,
@@ -91,9 +120,8 @@ class GeminiClient:
         )
 
         try:
-            model = genai.GenerativeModel(self.chat_model)
-            resp = model.generate_content(prompt, generation_config={"temperature": 0.0})
-            text = (getattr(resp, "text", "") or "").strip()
+            resp = self._generate_content(prompt, temperature=0.0)
+            text = self._extract_text(resp).strip()
             data = self._extract_json_object(text)
             if not data:
                 raise ValueError("No JSON object")
@@ -138,9 +166,8 @@ class GeminiClient:
         )
 
         try:
-            model = genai.GenerativeModel(self.chat_model)
-            resp = model.generate_content(prompt)
-            text = getattr(resp, "text", "") or ""
+            resp = self._generate_content(prompt)
+            text = self._extract_text(resp)
             return text.strip() or "I could not find this clearly in available texts."
         except Exception:
             return "I could not find this clearly in available texts."
@@ -190,9 +217,8 @@ class GeminiClient:
         )
 
         try:
-            model = genai.GenerativeModel(self.chat_model)
-            resp = model.generate_content(prompt, generation_config={"temperature": 0.0})
-            text = (getattr(resp, "text", "") or "").strip()
+            resp = self._generate_content(prompt, temperature=0.0)
+            text = self._extract_text(resp).strip()
             data = self._extract_json_object(text)
             if not data:
                 return fallback
@@ -240,15 +266,15 @@ class GeminiClient:
                 "Output only plain text, no markdown, no explanation."
             )
 
-            model = genai.GenerativeModel(self.chat_model)
-            response = model.generate_content(
-                [
-                    prompt,
-                    {"mime_type": "image/png", "data": image_bytes},
-                ],
-                generation_config={"temperature": 0.0},
-            )
-            text = (getattr(response, "text", "") or "").strip()
+            image_part: Any = {"mime_type": "image/png", "data": image_bytes}
+            if genai_types is not None:
+                try:
+                    image_part = genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+                except Exception:
+                    image_part = {"mime_type": "image/png", "data": image_bytes}
+
+            response = self._generate_content([prompt, image_part], temperature=0.0)
+            text = self._extract_text(response).strip()
             self._page_ocr_cache[cache_key] = text
             return text
         except Exception:
@@ -305,6 +331,115 @@ class GeminiClient:
             f"User Question:\n{question}\n\n"
             f"Citations:\n{'\n\n'.join(context_parts)}\n"
         )
+
+    def _generate_content(self, contents: Any, temperature: float | None = None) -> Any:
+        if not self.enabled or self.client is None:
+            raise RuntimeError("Gemini client unavailable")
+
+        kwargs: dict[str, Any] = {
+            "model": self.chat_model,
+            "contents": contents,
+        }
+        if temperature is not None:
+            if genai_types is not None:
+                try:
+                    kwargs["config"] = genai_types.GenerateContentConfig(temperature=temperature)
+                except Exception:
+                    kwargs["config"] = {"temperature": temperature}
+            else:
+                kwargs["config"] = {"temperature": temperature}
+
+        try:
+            return self.client.models.generate_content(**kwargs)
+        except Exception:
+            kwargs.pop("config", None)
+            return self.client.models.generate_content(**kwargs)
+
+    def _extract_text(self, response: Any) -> str:
+        text = getattr(response, "text", "") or ""
+        if text:
+            return text
+
+        if isinstance(response, dict):
+            if isinstance(response.get("text"), str):
+                return response["text"]
+            candidates = response.get("candidates") or []
+            return self._extract_text_from_candidates(candidates)
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            return self._extract_text_from_candidates(candidates)
+
+        return ""
+
+    def _extract_text_from_candidates(self, candidates: Any) -> str:
+        try:
+            for candidate in candidates or []:
+                content = getattr(candidate, "content", None) or (
+                    candidate.get("content") if isinstance(candidate, dict) else None
+                )
+                parts = getattr(content, "parts", None) or (content.get("parts") if isinstance(content, dict) else [])
+                text_parts: list[str] = []
+                for part in parts or []:
+                    value = getattr(part, "text", None)
+                    if value is None and isinstance(part, dict):
+                        value = part.get("text")
+                    if isinstance(value, str) and value.strip():
+                        text_parts.append(value.strip())
+                if text_parts:
+                    return "\n".join(text_parts)
+        except Exception:
+            return ""
+        return ""
+
+    def _extract_embedding_values(self, response: Any) -> list[float]:
+        embeddings = getattr(response, "embeddings", None)
+        if embeddings:
+            first = embeddings[0]
+            values = getattr(first, "values", None)
+            if values is None and isinstance(first, dict):
+                values = first.get("values")
+            if values:
+                return [float(v) for v in values]
+
+        single = getattr(response, "embedding", None)
+        if single is not None:
+            values = getattr(single, "values", None)
+            if values is None and isinstance(single, dict):
+                values = single.get("values")
+            if values:
+                return [float(v) for v in values]
+
+        if isinstance(response, dict):
+            if isinstance(response.get("embedding"), dict):
+                values = response["embedding"].get("values")
+                if values:
+                    return [float(v) for v in values]
+            if isinstance(response.get("embeddings"), list) and response["embeddings"]:
+                first = response["embeddings"][0]
+                if isinstance(first, dict):
+                    values = first.get("values")
+                    if values:
+                        return [float(v) for v in values]
+
+        return []
+
+    def _extract_embedding_matrix(self, response: Any) -> list[list[float]]:
+        embeddings = getattr(response, "embeddings", None)
+        if embeddings is None and isinstance(response, dict):
+            embeddings = response.get("embeddings")
+        if not embeddings:
+            single = self._extract_embedding_values(response)
+            return [single] if single else []
+
+        matrix: list[list[float]] = []
+        for embedding in embeddings:
+            values = getattr(embedding, "values", None)
+            if values is None and isinstance(embedding, dict):
+                values = embedding.get("values")
+            if values:
+                matrix.append([float(v) for v in values])
+        return matrix
 
     def _fallback_memory(
         self,

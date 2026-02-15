@@ -57,12 +57,16 @@ class VectorStore:
     ) -> list[tuple[str, float]]:
         if not self.available:
             return []
-        result = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=limit,
-            where=where,
-            include=["distances"],
-        )
+        try:
+            result = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=limit,
+                where=where,
+                include=["distances"],
+            )
+        except Exception:
+            # If embedding dimensions drift across model upgrades, lexical retrieval still works.
+            return []
 
         ids_list = result.get("ids", [[]])[0]
         dists = result.get("distances", [[]])[0]

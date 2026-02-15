@@ -24,8 +24,8 @@ class Settings:
     )
 
     gemini_api_key: str | None = None
-    gemini_chat_model: str = "gemini-2.5-flash"
-    gemini_embedding_model: str = "models/text-embedding-004"
+    gemini_chat_model: str = "gemini-3-flash-preview"
+    gemini_embedding_model: str = "gemini-embedding-001"
 
     retrieval_top_k: int = 6
     minimum_grounding_score: float = 0.015

@@ -14,6 +14,8 @@ Add your Gemini key in `.env`:
 
 ```bash
 GEMINI_API_KEY=your_key_here
+GEMINI_CHAT_MODEL=gemini-3-flash-preview
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 ```
 
 ## Run API

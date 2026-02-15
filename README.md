@@ -68,7 +68,7 @@ Implemented in this repository:
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+
+- Node.js 20.9+ (Next.js 16 requirement)
 - npm
 - Gemini API key (for full LLM reasoning and embeddings)
 
@@ -92,6 +92,8 @@ Update `/Users/skylark/Documents/github/tartam-rag/backend/.env`:
 
 ```env
 GEMINI_API_KEY=your_key_here
+GEMINI_CHAT_MODEL=gemini-3-flash-preview
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 ```
 
 Run API:
@@ -194,6 +196,7 @@ make test
 - Gujarati PDFs may require AES decryption support from `pycryptodome`.
 - OCR fallback is optional and disabled by default.
 - Without Gemini key, chat answering is disabled (agentic mode requires Gemini for reasoning).
+- `text-embedding-004` is deprecated by Google; this project now uses `gemini-embedding-001`.
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
 
 ## Frontend Status (answer to "what about frontend?")

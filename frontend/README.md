@@ -8,6 +8,8 @@ npm install
 cp .env.example .env.local
 ```
 
+Node.js 20.9+ is required for Next.js 16.
+
 ## Run
 
 ```bash

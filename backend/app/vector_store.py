@@ -38,7 +38,16 @@ class VectorStore:
     def upsert(self, ids: list[str], texts: list[str], embeddings: list[list[float]], metadatas: list[dict]) -> None:
         if not self.available or not ids:
             return
-        self.collection.upsert(ids=ids, documents=texts, embeddings=embeddings, metadatas=metadatas)
+
+        batch_size = self._safe_batch_size(default=5000)
+        for start in range(0, len(ids), batch_size):
+            end = min(start + batch_size, len(ids))
+            self.collection.upsert(
+                ids=ids[start:end],
+                documents=texts[start:end],
+                embeddings=embeddings[start:end],
+                metadatas=metadatas[start:end],
+            )
 
     def query(
         self,
@@ -64,3 +73,14 @@ class VectorStore:
             relevance = 1.0 / (1.0 + float(dist))
             output.append((item_id, relevance))
         return output
+
+    def _safe_batch_size(self, default: int) -> int:
+        if not self.available:
+            return default
+
+        try:
+            # Chroma exposes this on the client in newer versions.
+            dynamic_limit = int(self.collection._client.get_max_batch_size())  # type: ignore[attr-defined]
+            return max(1, min(default, dynamic_limit))
+        except Exception:
+            return default

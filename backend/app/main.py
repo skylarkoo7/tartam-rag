@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .chat import ChatService
+from .config import Settings, get_settings
+from .db import Database
+from .gemini_client import GeminiClient
+from .ingestion import IngestionService
+from .models import ChatRequest, ChatResponse, FiltersResponse, HealthResponse, IngestResponse, MessageRecord
+from .rate_limit import InMemoryRateLimiter
+from .retrieval import RetrievalService
+from .vector_store import VectorStore
+
+
+def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiClient, IngestionService, ChatService]:
+    db = Database(settings.db_path)
+    db.init_db()
+
+    vectors = VectorStore(settings.chroma_path)
+    gemini = GeminiClient(
+        api_key=settings.gemini_api_key,
+        chat_model=settings.gemini_chat_model,
+        embedding_model=settings.gemini_embedding_model,
+    )
+
+    ingest = IngestionService(settings=settings, db=db, vectors=vectors, gemini=gemini)
+    retrieval = RetrievalService(db=db, vectors=vectors, gemini=gemini)
+    chat = ChatService(settings=settings, db=db, retrieval=retrieval, gemini=gemini)
+    return db, vectors, gemini, ingest, chat
+
+
+settings = get_settings()
+database, vectors, gemini_client, ingestion_service, chat_service = build_services(settings)
+rate_limiter = InMemoryRateLimiter(max_per_minute=settings.request_rate_limit_per_min)
+
+app = FastAPI(title=settings.app_name)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"name": settings.app_name, "status": "ok"}
+
+
+@app.get(f"{settings.api_prefix}/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(
+        status="ok",
+        db_ready=True,
+        vector_ready=vectors.available,
+        indexed_chunks=database.count_units(),
+    )
+
+
+@app.post(f"{settings.api_prefix}/ingest", response_model=IngestResponse)
+def ingest() -> IngestResponse:
+    stats = ingestion_service.ingest()
+    return IngestResponse(
+        files_processed=stats.files_processed,
+        chunks_created=stats.chunks_created,
+        failed_files=stats.failed_files,
+        ocr_pages=stats.ocr_pages,
+        notes=stats.notes or [],
+    )
+
+
+@app.get(f"{settings.api_prefix}/filters", response_model=FiltersResponse)
+def filters() -> FiltersResponse:
+    granths, prakrans = database.list_filters()
+    return FiltersResponse(granths=granths, prakrans=prakrans)
+
+
+@app.get(f"{settings.api_prefix}/history/{{session_id}}", response_model=list[MessageRecord])
+def history(session_id: str) -> list[MessageRecord]:
+    rows = database.get_session_messages(session_id)
+    return [MessageRecord(**row) for row in rows]
+
+
+@app.post(
+    f"{settings.api_prefix}/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(rate_limiter.dependency())],
+)
+def chat(payload: ChatRequest) -> ChatResponse:
+    return chat_service.respond(payload)

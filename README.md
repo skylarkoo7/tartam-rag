@@ -32,13 +32,15 @@ Implemented in this repository:
     - `Grounding`
 - Persistence
   - Chat history in SQLite by `session_id`
+  - Session memory in SQLite (`summary_text` + `key_facts`) to preserve long-context continuity
+  - Server-side session list API for persistent history drawer
   - Ingestion run logs
 
 ### Frontend (Next.js + Tailwind)
 - Chat UI with smooth message flow
 - Inline expandable citation cards below assistant responses
 - Filters: language mode, granth, prakran
-- Session history drawer (local persistent sessions)
+- Session history drawer (server-backed sessions + local current-session id)
 - One-click ingestion trigger button
 
 ## Repository Structure
@@ -134,6 +136,7 @@ python -m scripts.run_ingest
 - `POST /api/ingest`
 - `GET /api/filters`
 - `GET /api/history/{session_id}`
+- `GET /api/sessions`
 - `POST /api/chat`
 
 ### `POST /api/chat` example
@@ -190,7 +193,7 @@ make test
 
 - Gujarati PDFs may require AES decryption support from `pycryptodome`.
 - OCR fallback is optional and disabled by default.
-- Without Gemini key, system uses deterministic fallback responses.
+- Without Gemini key, chat answering is disabled (agentic mode requires Gemini for reasoning).
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
 
 ## Frontend Status (answer to "what about frontend?")
@@ -201,4 +204,3 @@ Frontend is implemented and included in this repo under `/Users/skylark/Document
 - inline chopai citation cards,
 - session drawer,
 - backend API integration.
-

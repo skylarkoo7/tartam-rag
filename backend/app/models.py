@@ -59,6 +59,14 @@ class MessageRecord(BaseModel):
     created_at: datetime
 
 
+class SessionRecord(BaseModel):
+    session_id: str
+    title: str
+    preview: str
+    last_message_at: datetime
+    message_count: int
+
+
 class IngestResponse(BaseModel):
     files_processed: int
     chunks_created: int

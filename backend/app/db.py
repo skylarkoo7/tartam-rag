@@ -81,6 +81,13 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS session_memory (
+                    session_id TEXT PRIMARY KEY,
+                    summary_text TEXT NOT NULL,
+                    key_facts_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS ingest_runs (
                     run_id TEXT PRIMARY KEY,
                     files_processed INTEGER NOT NULL,
@@ -101,6 +108,9 @@ class Database:
                     prakran_name,
                     tokenize='unicode61 remove_diacritics 2'
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_messages_session_created
+                ON messages (session_id, created_at);
                 """
             )
 
@@ -290,7 +300,7 @@ class Database:
                 SELECT message_id, session_id, role, text, style_tag, citations_json, created_at
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY datetime(created_at) ASC
+                ORDER BY datetime(created_at) ASC, rowid ASC
                 """,
                 (session_id,),
             ).fetchall()
@@ -303,12 +313,90 @@ class Database:
                 SELECT role, text, style_tag, created_at
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY datetime(created_at) DESC
+                ORDER BY datetime(created_at) DESC, rowid DESC
                 LIMIT ?
                 """,
                 (session_id, limit),
             ).fetchall()
         return list(reversed(rows))
+
+    def get_session_memory(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id, summary_text, key_facts_json, updated_at
+                FROM session_memory
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        try:
+            key_facts = json.loads(row["key_facts_json"] or "[]")
+            if not isinstance(key_facts, list):
+                key_facts = []
+        except Exception:
+            key_facts = []
+
+        return {
+            "session_id": row["session_id"],
+            "summary_text": row["summary_text"] or "",
+            "key_facts": [str(item) for item in key_facts if str(item).strip()],
+            "updated_at": row["updated_at"],
+        }
+
+    def upsert_session_memory(self, session_id: str, summary_text: str, key_facts: list[str]) -> None:
+        payload = json.dumps([item for item in key_facts if item], ensure_ascii=False)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_memory (session_id, summary_text, key_facts_json, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    summary_text=excluded.summary_text,
+                    key_facts_json=excluded.key_facts_json,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (session_id, summary_text.strip(), payload),
+            )
+
+    def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    sessions.session_id AS session_id,
+                    sessions.last_message_at AS last_message_at,
+                    sessions.message_count AS message_count,
+                    COALESCE((
+                        SELECT m.text
+                        FROM messages m
+                        WHERE m.session_id = sessions.session_id
+                        AND m.role = 'user'
+                        ORDER BY datetime(m.created_at) ASC, m.rowid ASC
+                        LIMIT 1
+                    ), '') AS title_text,
+                    COALESCE((
+                        SELECT m.text
+                        FROM messages m
+                        WHERE m.session_id = sessions.session_id
+                        ORDER BY datetime(m.created_at) DESC, m.rowid DESC
+                        LIMIT 1
+                    ), '') AS preview_text
+                FROM (
+                    SELECT session_id, MAX(created_at) AS last_message_at, COUNT(*) AS message_count
+                    FROM messages
+                    GROUP BY session_id
+                ) sessions
+                ORDER BY datetime(sessions.last_message_at) DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return rows
 
     def record_ingest_run(
         self,

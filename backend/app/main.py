@@ -8,7 +8,15 @@ from .config import Settings, get_settings
 from .db import Database
 from .gemini_client import GeminiClient
 from .ingestion import IngestionService
-from .models import ChatRequest, ChatResponse, FiltersResponse, HealthResponse, IngestResponse, MessageRecord
+from .models import (
+    ChatRequest,
+    ChatResponse,
+    FiltersResponse,
+    HealthResponse,
+    IngestResponse,
+    MessageRecord,
+    SessionRecord,
+)
 from .rate_limit import InMemoryRateLimiter
 from .retrieval import RetrievalService
 from .vector_store import VectorStore
@@ -83,6 +91,21 @@ def filters() -> FiltersResponse:
 def history(session_id: str) -> list[MessageRecord]:
     rows = database.get_session_messages(session_id)
     return [MessageRecord(**row) for row in rows]
+
+
+@app.get(f"{settings.api_prefix}/sessions", response_model=list[SessionRecord])
+def sessions(limit: int = 50) -> list[SessionRecord]:
+    rows = database.list_sessions(limit=limit)
+    return [
+        SessionRecord(
+            session_id=row["session_id"],
+            title=(row.get("title_text") or "New chat")[:120],
+            preview=(row.get("preview_text") or "")[:240],
+            last_message_at=row["last_message_at"],
+            message_count=int(row.get("message_count", 0)),
+        )
+        for row in rows
+    ]
 
 
 @app.post(

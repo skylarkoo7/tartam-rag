@@ -22,7 +22,7 @@ def _unit() -> RetrievedUnit:
     )
 
 
-def test_fallback_explanation_has_structure() -> None:
+def test_generate_answer_without_llm_requires_key() -> None:
     client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
     result = client.generate_answer(
         question="what does this teach",
@@ -31,6 +31,26 @@ def test_fallback_explanation_has_structure() -> None:
         conversation_context=[{"role": "user", "text": "hello"}],
     )
 
-    assert "Direct Answer:" in result
-    assert "Explanation from Chopai:" in result
-    assert "Grounding:" in result
+    assert "LLM is not configured" in result
+
+
+def test_plan_query_without_llm_returns_default() -> None:
+    client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
+    plan = client.plan_query("what does this teach", conversation_context=[])
+    assert plan["intent"] == "answer_user_question_from_scripture"
+    assert isinstance(plan["sub_queries"], list)
+
+
+def test_summarize_memory_without_llm_returns_fallback() -> None:
+    client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
+    summary, key_facts = client.summarize_memory(
+        existing_summary="Earlier discussion about devotion.",
+        existing_key_facts=["User prefers Hinglish responses."],
+        latest_user_message="explain this chopai in simple words",
+        latest_assistant_message="This teaches surrender with steady remembrance.",
+        conversation_context=[{"role": "user", "text": "previous"}],
+        citations=[_unit()],
+    )
+
+    assert "devotion" in summary.lower() or "explain this chopai" in summary.lower()
+    assert key_facts

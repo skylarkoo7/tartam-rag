@@ -1,4 +1,4 @@
-import { ChatRequest, ChatResponse, FiltersResponse, MessageRecord } from "./types";
+import { ChatRequest, ChatResponse, FiltersResponse, MessageRecord, SessionRecord } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api";
 
@@ -18,6 +18,11 @@ export async function fetchFilters(): Promise<FiltersResponse> {
 export async function fetchHistory(sessionId: string): Promise<MessageRecord[]> {
   const resp = await fetch(`${API_BASE}/history/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
   return handleJson<MessageRecord[]>(resp);
+}
+
+export async function fetchSessions(limit = 50): Promise<SessionRecord[]> {
+  const resp = await fetch(`${API_BASE}/sessions?limit=${limit}`, { cache: "no-store" });
+  return handleJson<SessionRecord[]>(resp);
 }
 
 export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {

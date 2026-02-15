@@ -50,6 +50,14 @@ export interface MessageRecord {
   created_at: string;
 }
 
+export interface SessionRecord {
+  session_id: string;
+  title: string;
+  preview: string;
+  last_message_at: string;
+  message_count: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";

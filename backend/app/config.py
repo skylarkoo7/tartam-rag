@@ -33,6 +33,7 @@ class Settings:
 
     allow_debug_payloads: bool = True
     enable_ocr_fallback: bool = False
+    allow_gemini_page_ocr_recovery: bool = True
 
     @property
     def corpus_paths(self) -> list[Path]:
@@ -120,6 +121,9 @@ def get_settings() -> Settings:
 
     settings.allow_debug_payloads = _to_bool(os.getenv("ALLOW_DEBUG_PAYLOADS"), settings.allow_debug_payloads)
     settings.enable_ocr_fallback = _to_bool(os.getenv("ENABLE_OCR_FALLBACK"), settings.enable_ocr_fallback)
+    settings.allow_gemini_page_ocr_recovery = _to_bool(
+        os.getenv("ALLOW_GEMINI_PAGE_OCR_RECOVERY"), settings.allow_gemini_page_ocr_recovery
+    )
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.chroma_path.mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from pathlib import Path
 from typing import Iterable
 
 from .db import RetrievedUnit
@@ -35,6 +36,7 @@ class GeminiClient:
         self.chat_model = chat_model
         self.embedding_model = embedding_model
         self.enabled = bool(api_key and genai)
+        self._page_ocr_cache: dict[str, str] = {}
 
         if self.enabled:
             genai.configure(api_key=api_key)
@@ -84,6 +86,51 @@ class GeminiClient:
             return text.strip() or self._fallback_explanation(question=question, citations=citations)
         except Exception:
             return self._fallback_explanation(question=question, citations=citations)
+
+    def ocr_pdf_page(self, pdf_path: str, page_number: int) -> str:
+        if not self.enabled:
+            return ""
+
+        cache_key = f"{pdf_path}:{page_number}"
+        if cache_key in self._page_ocr_cache:
+            return self._page_ocr_cache[cache_key]
+
+        try:
+            import fitz  # type: ignore
+        except Exception:
+            return ""
+
+        if not Path(pdf_path).exists():
+            return ""
+
+        try:
+            doc = fitz.open(pdf_path)
+            if page_number < 1 or page_number > len(doc):
+                return ""
+
+            page = doc[page_number - 1]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image_bytes = pix.tobytes("png")
+
+            prompt = (
+                "Transcribe this scripture page into clean Unicode text. "
+                "Preserve the original language (Hindi/Gujarati) and lines. "
+                "Output only plain text, no markdown, no explanation."
+            )
+
+            model = genai.GenerativeModel(self.chat_model)
+            response = model.generate_content(
+                [
+                    prompt,
+                    {"mime_type": "image/png", "data": image_bytes},
+                ],
+                generation_config={"temperature": 0.0},
+            )
+            text = (getattr(response, "text", "") or "").strip()
+            self._page_ocr_cache[cache_key] = text
+            return text
+        except Exception:
+            return ""
 
     def _build_grounded_prompt(
         self,

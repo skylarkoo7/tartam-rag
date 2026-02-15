@@ -45,7 +45,6 @@ export default function HomePage() {
   const [granths, setGranths] = useState<string[]>([]);
   const [prakrans, setPrakrans] = useState<string[]>([]);
   const [ingesting, setIngesting] = useState(false);
-  const [showSessions, setShowSessions] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -64,12 +63,13 @@ export default function HomePage() {
     } catch {
       known = [];
     }
+
     if (!known.includes(current)) {
-      known = [current, ...known].slice(0, 20);
+      known = [current, ...known].slice(0, 30);
       window.localStorage.setItem(sessionsKey, JSON.stringify(known));
     }
-    setSessions(known);
 
+    setSessions(known);
     setSessionId(current);
 
     Promise.all([fetchFilters(), fetchHistory(current)])
@@ -151,6 +151,7 @@ export default function HomePage() {
     }
     setSessionId(nextSessionId);
     window.localStorage.setItem("tartam_session_id", nextSessionId);
+
     setBootLoading(true);
     setError(null);
     try {
@@ -160,17 +161,16 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : "Failed to load session history");
     } finally {
       setBootLoading(false);
-      setShowSessions(false);
     }
   }
 
   async function createNewSession() {
     const next = createSessionId();
-    const updated = [next, ...sessions].slice(0, 20);
+    const updated = [next, ...sessions].slice(0, 30);
     setSessions(updated);
     window.localStorage.setItem("tartam_sessions", JSON.stringify(updated));
-    await openSession(next);
     setMessages([]);
+    await openSession(next);
   }
 
   async function onIngest() {
@@ -192,60 +192,38 @@ export default function HomePage() {
     }
   }
 
-  if (bootLoading) {
-    return (
-      <main className="mx-auto max-w-6xl px-4 py-10">
-        <div className="rounded-2xl bg-white/70 p-6 text-sm text-ink shadow-soft">Loading Tartam chatbot...</div>
-      </main>
-    );
-  }
-
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-6">
-      <header className="rounded-3xl border border-white/40 bg-white/70 p-5 shadow-soft backdrop-blur-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-ink">Tartam Multilingual RAG Chatbot</h1>
-            <p className="mt-1 text-sm text-ink/70">
-              Ask in Hindi, Gujarati, English, Hinglish, or Gujarati Roman. Responses stay grounded in indexed chopai.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+    <main className="h-screen bg-[#f6f7f4] text-zinc-900">
+      <div className="mx-auto flex h-full max-w-[1400px]">
+        <aside className="hidden w-72 flex-col border-r border-zinc-200 bg-[#f0f2ee] p-4 md:flex">
+          <h1 className="text-lg font-semibold tracking-tight">Tartam RAG</h1>
+          <p className="mt-1 text-xs text-zinc-500">Scripture-grounded multilingual assistant</p>
+
+          <div className="mt-4 flex flex-col gap-2">
             <button
-              className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/90"
-              onClick={() => setShowSessions((prev) => !prev)}
-              type="button"
-            >
-              Sessions
-            </button>
-            <button
-              className="rounded-xl bg-vermilion px-4 py-2 text-sm font-semibold text-white transition hover:bg-vermilion/90"
+              className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800"
               onClick={() => void createNewSession()}
               type="button"
             >
-              New Session
+              + New chat
             </button>
             <button
-              className="rounded-xl bg-leaf px-4 py-2 text-sm font-semibold text-white transition hover:bg-leaf/90 disabled:opacity-60"
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
               onClick={onIngest}
               disabled={ingesting}
               type="button"
             >
-              {ingesting ? "Indexing..." : "Run Ingestion"}
+              {ingesting ? "Indexing..." : "Re-index corpus"}
             </button>
           </div>
-        </div>
-      </header>
 
-      {showSessions ? (
-        <aside className="rounded-2xl border border-white/50 bg-white/70 p-3 shadow-soft backdrop-blur-sm">
-          <p className="mb-2 text-sm font-semibold text-ink">Session History</p>
-          <div className="max-h-48 space-y-2 overflow-y-auto">
+          <div className="mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Recent Sessions</div>
+          <div className="mt-2 flex-1 space-y-1 overflow-y-auto pr-1">
             {sessions.map((item) => (
               <button
                 key={item}
                 className={`w-full rounded-lg px-3 py-2 text-left text-xs transition ${
-                  item === sessionId ? "bg-saffron text-white" : "bg-sand text-ink hover:bg-sand/80"
+                  item === sessionId ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"
                 }`}
                 onClick={() => void openSession(item)}
                 type="button"
@@ -255,67 +233,94 @@ export default function HomePage() {
             ))}
           </div>
         </aside>
-      ) : null}
 
-      <FilterBar
-        styleMode={styleMode}
-        onStyleMode={setStyleMode}
-        granth={granth}
-        prakran={prakran}
-        granths={granths}
-        prakrans={prakrans}
-        onGranth={setGranth}
-        onPrakran={setPrakran}
-      />
-
-      {error ? (
-        <div className="rounded-xl border border-vermilion/20 bg-vermilion/10 p-3 text-sm text-vermilion">{error}</div>
-      ) : null}
-
-      <section className="flex-1 rounded-3xl border border-white/50 bg-white/70 p-4 shadow-soft backdrop-blur-sm">
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-2">
-          {messages.length === 0 ? (
-            <div className="rounded-xl bg-sand p-4 text-sm text-ink/80">
-              Start by indexing documents, then ask a question like: <em>kaise ho</em> or <em>kem cho</em>.
+        <section className="flex min-w-0 flex-1 flex-col">
+          <header className="border-b border-zinc-200 bg-white/80 px-4 py-3 backdrop-blur md:px-6">
+            <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold">Multilingual Tartam Chat</h2>
+                <p className="text-xs text-zinc-500">Hindi · Gujarati · Hinglish · Gujarati Roman</p>
+              </div>
+              <button
+                className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 md:hidden"
+                onClick={() => void createNewSession()}
+                type="button"
+              >
+                New chat
+              </button>
             </div>
-          ) : null}
+          </header>
 
-          {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
-          <div ref={scrollRef} />
-        </div>
-      </section>
+          <div className="border-b border-zinc-200 bg-white px-4 py-3 md:px-6">
+            <div className="mx-auto w-full max-w-4xl">
+              <FilterBar
+                styleMode={styleMode}
+                onStyleMode={setStyleMode}
+                granth={granth}
+                prakran={prakran}
+                granths={granths}
+                prakrans={prakrans}
+                onGranth={setGranth}
+                onPrakran={setPrakran}
+              />
+            </div>
+          </div>
 
-      <section className="rounded-3xl border border-white/50 bg-white/70 p-4 shadow-soft backdrop-blur-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end">
-          <label className="flex-1 text-sm text-ink/80">
-            Ask your question
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void onSend();
-                }
-              }}
-              rows={3}
-              placeholder="Ask about any chopai, prakran, or meaning..."
-              className="mt-1 w-full resize-none rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm"
-            />
-          </label>
+          <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+            <div className="mx-auto w-full max-w-4xl space-y-5">
+              {bootLoading ? (
+                <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600">Loading chat...</div>
+              ) : null}
 
-          <button
-            className="h-11 rounded-xl bg-saffron px-5 text-sm font-semibold text-white transition hover:bg-saffron/90 disabled:opacity-50"
-            disabled={!canSend}
-            onClick={onSend}
-            type="button"
-          >
-            {loading ? "Thinking..." : "Send"}
-          </button>
-        </div>
-      </section>
+              {error ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+              ) : null}
+
+              {!bootLoading && messages.length === 0 ? (
+                <div className="rounded-xl border border-zinc-200 bg-white p-5 text-sm text-zinc-600">
+                  Ask anything from the corpus. Example: <em>mohajal kya hai</em> or <em>kem cho</em>.
+                </div>
+              ) : null}
+
+              {messages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
+              ))}
+              <div ref={scrollRef} />
+            </div>
+          </div>
+
+          <div className="border-t border-zinc-200 bg-white px-4 py-4 md:px-6">
+            <div className="mx-auto w-full max-w-4xl">
+              <div className="rounded-2xl border border-zinc-300 bg-zinc-50 p-2">
+                <textarea
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void onSend();
+                    }
+                  }}
+                  rows={3}
+                  placeholder="Message Tartam RAG..."
+                  className="w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400"
+                />
+                <div className="flex items-center justify-between border-t border-zinc-200 pt-2">
+                  <p className="px-2 text-xs text-zinc-500">Shift + Enter for newline</p>
+                  <button
+                    className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                    disabled={!canSend}
+                    onClick={() => void onSend()}
+                    type="button"
+                  >
+                    {loading ? "Thinking..." : "Send"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

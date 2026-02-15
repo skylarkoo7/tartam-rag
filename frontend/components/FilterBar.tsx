@@ -26,11 +26,11 @@ export function FilterBar(props: FilterBarProps) {
   const { styleMode, onStyleMode, granth, prakran, granths, prakrans, onGranth, onPrakran } = props;
 
   return (
-    <div className="grid gap-3 rounded-2xl border border-white/50 bg-white/70 p-4 shadow-soft backdrop-blur-sm md:grid-cols-3">
-      <label className="text-sm text-ink/80">
-        Language Mode
+    <div className="grid gap-2 md:grid-cols-3">
+      <label className="text-xs text-zinc-500">
+        Language
         <select
-          className="mt-1 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800"
           value={styleMode}
           onChange={(event) => onStyleMode(event.target.value as StyleMode)}
         >
@@ -42,14 +42,14 @@ export function FilterBar(props: FilterBarProps) {
         </select>
       </label>
 
-      <label className="text-sm text-ink/80">
-        Granth Filter
+      <label className="text-xs text-zinc-500">
+        Granth
         <select
-          className="mt-1 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800"
           value={granth}
           onChange={(event) => onGranth(event.target.value)}
         >
-          <option value="">All Granths</option>
+          <option value="">All granths</option>
           {granths.map((item) => (
             <option key={item} value={item}>
               {item}
@@ -58,14 +58,14 @@ export function FilterBar(props: FilterBarProps) {
         </select>
       </label>
 
-      <label className="text-sm text-ink/80">
-        Prakran Filter
+      <label className="text-xs text-zinc-500">
+        Prakran
         <select
-          className="mt-1 w-full rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm"
+          className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800"
           value={prakran}
           onChange={(event) => onPrakran(event.target.value)}
         >
-          <option value="">All Prakrans</option>
+          <option value="">All prakrans</option>
           {prakrans.map((item) => (
             <option key={item} value={item}>
               {item}

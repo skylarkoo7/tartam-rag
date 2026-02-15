@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 
 from .config import Settings
-from .db import Database
+from .db import Database, RetrievedUnit
 from .gemini_client import GeminiClient
-from .language import detect_style, render_in_style, resolve_output_style
+from .language import detect_style, normalize_text, render_in_style, resolve_output_style, transliterate_to_latin
 from .models import Citation, ChatRequest, ChatResponse
 from .retrieval import RetrievalService
+from .text_quality import is_garbled_text, safe_display_text
 
 
 class ChatService:
@@ -51,37 +53,52 @@ class ChatService:
             citations: list[Citation] = []
             not_found = True
         else:
+            recovered_pairs = [(self._recover_unit_if_needed(item.unit), item.score) for item in strong_results]
+            explainable_pairs = [pair for pair in recovered_pairs if not is_garbled_text(pair[0].chunk_text)]
+
             citations = []
-            for item in strong_results:
+            for unit, score in recovered_pairs:
                 prev_context, next_context = self.db.get_neighbor_context(
-                    current_id=item.unit.id,
-                    pdf_path=item.unit.pdf_path,
-                    granth_name=item.unit.granth_name,
-                    prakran_name=item.unit.prakran_name,
+                    current_id=unit.id,
+                    pdf_path=unit.pdf_path,
+                    granth_name=unit.granth_name,
+                    prakran_name=unit.prakran_name,
                 )
                 citations.append(
                     Citation(
-                        citation_id=item.unit.id,
-                        granth_name=item.unit.granth_name,
-                        prakran_name=item.unit.prakran_name,
-                        chopai_lines=item.unit.chopai_lines[:2],
-                        meaning_text=item.unit.meaning_text,
-                        page_number=item.unit.page_number,
-                        pdf_path=item.unit.pdf_path,
-                        score=item.score,
-                        prev_context=prev_context,
-                        next_context=next_context,
+                        citation_id=unit.id,
+                        granth_name=unit.granth_name,
+                        prakran_name=unit.prakran_name,
+                        chopai_lines=self._safe_chopai_lines(unit.chopai_lines),
+                        meaning_text=safe_display_text(
+                            unit.meaning_text,
+                            fallback="Meaning text could not be decoded from this PDF page.",
+                        ),
+                        page_number=unit.page_number,
+                        pdf_path=unit.pdf_path,
+                        score=score,
+                        prev_context=safe_display_text(prev_context or "", fallback="") or None,
+                        next_context=safe_display_text(next_context or "", fallback="") or None,
                     )
                 )
-            generated = self.gemini.generate_answer(
-                question=payload.message,
-                citations=[item.unit for item in strong_results],
-                target_style=answer_style,
-                conversation_context=self.db.get_recent_messages(payload.session_id, limit=6),
-            )
-            answer = render_in_style(generated, answer_style)
-            follow_up = None
-            not_found = False
+
+            if not explainable_pairs:
+                answer = (
+                    "I found related pages, but their text appears encoded incorrectly in the current PDF extraction. "
+                    "Please enable Gemini OCR recovery with API key or use OCR-processed PDFs for readable output."
+                )
+                follow_up = "You can also ask with exact granth and page number for targeted OCR recovery."
+                not_found = True
+            else:
+                generated = self.gemini.generate_answer(
+                    question=payload.message,
+                    citations=[unit for unit, _ in explainable_pairs],
+                    target_style=answer_style,
+                    conversation_context=self.db.get_recent_messages(payload.session_id, limit=6),
+                )
+                answer = render_in_style(generated, answer_style)
+                follow_up = None
+                not_found = False
 
         self._persist_exchange(
             session_id=payload.session_id,
@@ -100,6 +117,48 @@ class ChatService:
             follow_up_question=follow_up,
             citations=citations,
             debug=debug,
+        )
+
+    def _safe_chopai_lines(self, lines: list[str]) -> list[str]:
+        cleaned = [
+            safe_display_text(line, fallback="")
+            for line in lines[:2]
+            if safe_display_text(line, fallback="")
+        ]
+        if cleaned:
+            return cleaned
+        return ["Chopai text could not be decoded from this PDF page."]
+
+    def _recover_unit_if_needed(self, unit: RetrievedUnit) -> RetrievedUnit:
+        if not is_garbled_text(unit.chunk_text):
+            return unit
+
+        if not self.settings.allow_gemini_page_ocr_recovery:
+            return unit
+
+        ocr_text = self.gemini.ocr_pdf_page(unit.pdf_path, unit.page_number)
+        ocr_text = normalize_text(ocr_text)
+        if not ocr_text or is_garbled_text(ocr_text, threshold=0.12):
+            return unit
+
+        lines = [normalize_text(item) for item in ocr_text.splitlines() if normalize_text(item)]
+        if not lines:
+            return unit
+
+        chopai_lines = lines[:2]
+        meaning_text = " ".join(lines[2:]) if len(lines) > 2 else " ".join(lines)
+        combined = "\n".join(lines[:60])
+        translit = transliterate_to_latin(combined).lower()
+
+        return replace(
+            unit,
+            chopai_lines=chopai_lines,
+            meaning_text=meaning_text,
+            chunk_text=combined,
+            normalized_text=normalize_text(combined),
+            translit_hi_latn=translit,
+            translit_gu_latn=translit,
+            chunk_type=f"{unit.chunk_type}_ocr",
         )
 
     def _persist_exchange(

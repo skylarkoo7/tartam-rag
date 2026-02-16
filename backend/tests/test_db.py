@@ -57,3 +57,25 @@ def test_list_sessions_includes_latest_preview(tmp_path: Path) -> None:
     assert by_id["sA"]["title_text"] == "first question"
     assert by_id["sA"]["preview_text"] == "first answer"
     assert by_id["sA"]["message_count"] == 2
+
+
+def test_session_context_round_trip(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.init_db()
+
+    db.upsert_session_context(
+        session_id="ctx-1",
+        granth_name="ShriSingaar",
+        prakran_number=14,
+        prakran_range_start=14,
+        prakran_range_end=19,
+        chopai_number=4,
+    )
+
+    ctx = db.get_session_context("ctx-1")
+    assert ctx is not None
+    assert ctx["granth_name"] == "ShriSingaar"
+    assert int(ctx["prakran_number"]) == 14
+    assert int(ctx["prakran_range_start"]) == 14
+    assert int(ctx["prakran_range_end"]) == 19
+    assert int(ctx["chopai_number"]) == 4

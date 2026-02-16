@@ -8,9 +8,12 @@ from .config import Settings, get_settings
 from .db import Database
 from .gemini_client import GeminiClient
 from .ingestion import IngestionService
+from .language import convert_text_fallback
 from .models import (
     ChatRequest,
     ChatResponse,
+    ConvertRequest,
+    ConvertResponse,
     FiltersResponse,
     HealthResponse,
     IngestResponse,
@@ -115,3 +118,18 @@ def sessions(limit: int = 50) -> list[SessionRecord]:
 )
 def chat(payload: ChatRequest) -> ChatResponse:
     return chat_service.respond(payload)
+
+
+@app.post(
+    f"{settings.api_prefix}/convert",
+    response_model=ConvertResponse,
+    dependencies=[Depends(rate_limiter.dependency())],
+)
+def convert(payload: ConvertRequest) -> ConvertResponse:
+    if gemini_client.enabled:
+        text = gemini_client.convert_text(payload.text, payload.target_mode)
+        if text.strip() == payload.text.strip():
+            text = convert_text_fallback(payload.text, payload.target_mode)
+    else:
+        text = convert_text_fallback(payload.text, payload.target_mode)
+    return ConvertResponse(text=text, target_mode=payload.target_mode)

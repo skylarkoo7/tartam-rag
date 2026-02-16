@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 StyleMode = Literal["auto", "hi", "gu", "en", "hi_latn", "gu_latn"]
+ConvertMode = Literal["hi", "gu", "en", "hi_latn", "gu_latn", "en_deva", "en_gu"]
 
 
 class ChatFilters(BaseModel):
@@ -26,6 +27,7 @@ class Citation(BaseModel):
     citation_id: str
     granth_name: str
     prakran_name: str
+    chopai_number: str | None = None
     chopai_lines: list[str]
     meaning_text: str
     page_number: int
@@ -41,7 +43,21 @@ class ChatResponse(BaseModel):
     not_found: bool
     follow_up_question: str | None = None
     citations: list[Citation]
+    context_state: dict | None = None
+    available_conversions: list[ConvertMode] = Field(
+        default_factory=lambda: ["en", "hi", "gu", "hi_latn", "gu_latn", "en_deva", "en_gu"]
+    )
     debug: dict | None = None
+
+
+class ConvertRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=12_000)
+    target_mode: ConvertMode
+
+
+class ConvertResponse(BaseModel):
+    text: str
+    target_mode: ConvertMode
 
 
 class FiltersResponse(BaseModel):

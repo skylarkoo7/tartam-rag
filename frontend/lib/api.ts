@@ -1,4 +1,12 @@
-import { ChatRequest, ChatResponse, FiltersResponse, MessageRecord, SessionRecord } from "./types";
+import {
+  ChatRequest,
+  ChatResponse,
+  ConvertMode,
+  ConvertResponse,
+  FiltersResponse,
+  MessageRecord,
+  SessionRecord
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api";
 
@@ -32,6 +40,18 @@ export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {
     body: JSON.stringify(payload)
   });
   return handleJson<ChatResponse>(resp);
+}
+
+export async function convertAnswer(text: string, targetMode: ConvertMode): Promise<ConvertResponse> {
+  const resp = await fetch(`${API_BASE}/convert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      target_mode: targetMode
+    })
+  });
+  return handleJson<ConvertResponse>(resp);
 }
 
 export async function triggerIngest(): Promise<{

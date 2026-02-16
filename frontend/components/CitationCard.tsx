@@ -39,9 +39,16 @@ export function CitationCard({ citation }: CitationCardProps) {
           <h4 className="text-sm font-semibold text-[#6d4326]">
             {citation.granth_name} <span className="text-[#9a6d48]">·</span> {citation.prakran_name}
           </h4>
-          <span className="rounded-full border border-[#d9b48b] bg-[#fffaf3] px-2 py-0.5 text-xs text-[#805331]">
-            p.{citation.page_number}
-          </span>
+          <div className="flex items-center gap-2">
+            {citation.chopai_number ? (
+              <span className="rounded-full border border-[#d9b48b] bg-[#fffaf3] px-2 py-0.5 text-xs text-[#805331]">
+                Ch.{citation.chopai_number}
+              </span>
+            ) : null}
+            <span className="rounded-full border border-[#d9b48b] bg-[#fffaf3] px-2 py-0.5 text-xs text-[#805331]">
+              p.{citation.page_number}
+            </span>
+          </div>
         </div>
 
         <p className="mt-2 text-sm text-[#5f3a21]">{chopaiPreview}</p>

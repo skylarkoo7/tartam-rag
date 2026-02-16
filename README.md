@@ -5,6 +5,12 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 - LLM-based explanations (not just retrieval snippets)
 - Inline chopai cards in chat UI (with meaning + source metadata)
 - Multilingual interaction support: Hindi, Gujarati, English, Hinglish (`kaise ho`), Gujarati-in-English (`kem cho`)
+- Structured query understanding for references like:
+  - `singar granth prakran 14 to 19 summary and explanation`
+  - `what did chaupai 4 of prakran 14 says`
+  - `prakran 19 ma ketli chaupai che`
+- Session context memory for granth/prakran/chopai continuity across follow-up turns
+- One-click answer conversion options (Hindi/Gujarati/English + script variants)
 
 ## Current Status
 
@@ -26,6 +32,7 @@ Implemented in this repository:
   - Reciprocal Rank Fusion (RRF)
 - Chat generation
   - Uses retrieved citations as strict grounding context
+  - Applies deterministic reference constraints (granth/prakran/chopai) before generation
   - LLM response format:
     - `Direct Answer`
     - `Explanation from Chopai`
@@ -33,6 +40,7 @@ Implemented in this repository:
 - Persistence
   - Chat history in SQLite by `session_id`
   - Session memory in SQLite (`summary_text` + `key_facts`) to preserve long-context continuity
+  - Session reference context in SQLite (`granth_name`, `prakran_number`, `chopai_number`, range)
   - Server-side session list API for persistent history drawer
   - Ingestion run logs
 
@@ -140,6 +148,7 @@ python -m scripts.run_ingest
 - `GET /api/history/{session_id}`
 - `GET /api/sessions`
 - `POST /api/chat`
+- `POST /api/convert`
 
 ### `POST /api/chat` example
 
@@ -167,6 +176,11 @@ python -m scripts.run_ingest
 - `gu_latn`
 
 In `auto`, backend detects script/style and tries to mirror user style.
+
+Answer conversion endpoint (`POST /api/convert`) supports:
+- `en`, `hi`, `gu`, `hi_latn`, `gu_latn`
+- `en_deva` (English words in Devanagari script)
+- `en_gu` (English words in Gujarati script)
 
 ## Testing
 

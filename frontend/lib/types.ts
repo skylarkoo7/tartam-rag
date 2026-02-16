@@ -1,4 +1,5 @@
 export type StyleMode = "auto" | "hi" | "gu" | "en" | "hi_latn" | "gu_latn";
+export type ConvertMode = "hi" | "gu" | "en" | "hi_latn" | "gu_latn" | "en_deva" | "en_gu";
 
 export interface ChatFilters {
   granth?: string;
@@ -9,6 +10,7 @@ export interface Citation {
   citation_id: string;
   granth_name: string;
   prakran_name: string;
+  chopai_number?: string | null;
   chopai_lines: string[];
   meaning_text: string;
   page_number: number;
@@ -32,7 +34,25 @@ export interface ChatResponse {
   not_found: boolean;
   follow_up_question?: string;
   citations: Citation[];
+  context_state?: {
+    granth_name?: string | null;
+    prakran_number?: number | null;
+    prakran_range_start?: number | null;
+    prakran_range_end?: number | null;
+    chopai_number?: number | null;
+  };
+  available_conversions?: ConvertMode[];
   debug?: { retrieval_scores: number[] };
+}
+
+export interface ConvertRequest {
+  text: string;
+  target_mode: ConvertMode;
+}
+
+export interface ConvertResponse {
+  text: string;
+  target_mode: ConvertMode;
 }
 
 export interface FiltersResponse {

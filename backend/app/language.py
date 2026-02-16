@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover - optional dependency behavior
     transliterate = None
 
 StyleTag = Literal["hi", "gu", "en", "hi_latn", "gu_latn"]
+ConversionMode = Literal["hi", "gu", "en", "hi_latn", "gu_latn", "en_deva", "en_gu"]
 
 _HI_HINTS = {
     "kaise",
@@ -154,10 +155,34 @@ def resolve_output_style(style_mode: str, detected: StyleTag) -> StyleTag:
 def render_in_style(text: str, style: StyleTag) -> str:
     """Render output in requested style with best-effort transliteration."""
 
+    text = normalize_text(text)
+    if not text:
+        return ""
+
+    counts = _count_scripts(text)
+
     if style in {"en", "hi_latn", "gu_latn"}:
         return transliterate_to_latin(text)
     if style == "hi":
+        if counts.devanagari >= max(counts.gujarati, counts.latin):
+            return text
         return transliterate_latin_to_script(text, "hi")
     if style == "gu":
+        if counts.gujarati >= max(counts.devanagari, counts.latin):
+            return text
+        return transliterate_latin_to_script(text, "gu")
+    return text
+
+
+def convert_text_fallback(text: str, mode: ConversionMode) -> str:
+    text = normalize_text(text)
+    if not text:
+        return ""
+
+    if mode in {"hi", "gu", "en", "hi_latn", "gu_latn"}:
+        return render_in_style(text, mode if mode in {"hi", "gu", "en", "hi_latn", "gu_latn"} else "en")
+    if mode == "en_deva":
+        return transliterate_latin_to_script(text, "hi")
+    if mode == "en_gu":
         return transliterate_latin_to_script(text, "gu")
     return text

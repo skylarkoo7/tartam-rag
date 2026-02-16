@@ -154,6 +154,8 @@ class GeminiClient:
         plan: dict | None = None,
         memory_summary: str = "",
         memory_key_facts: list[str] | None = None,
+        context_constraints: dict | None = None,
+        grounded_facts: list[str] | None = None,
     ) -> str:
         if not citations:
             return "I could not find this clearly in available texts."
@@ -169,6 +171,8 @@ class GeminiClient:
             plan=plan or {},
             memory_summary=memory_summary,
             memory_key_facts=memory_key_facts or [],
+            context_constraints=context_constraints or {},
+            grounded_facts=grounded_facts or [],
         )
 
         try:
@@ -177,6 +181,36 @@ class GeminiClient:
             return text.strip() or "I could not find this clearly in available texts."
         except Exception:
             return "I could not find this clearly in available texts."
+
+    def convert_text(self, text: str, target_mode: str) -> str:
+        value = (text or "").strip()
+        if not value:
+            return ""
+
+        if not self.enabled:
+            return value
+
+        prompt = (
+            "Convert the following text according to requested mode.\n"
+            "Return only converted text. No bullets, no explanation.\n"
+            "Modes:\n"
+            "- en: Translate to natural English.\n"
+            "- hi: Translate to natural Hindi in Devanagari script.\n"
+            "- gu: Translate to natural Gujarati in Gujarati script.\n"
+            "- hi_latn: Hindi language in Latin script.\n"
+            "- gu_latn: Gujarati language in Latin script.\n"
+            "- en_deva: Keep English words, write phonetically in Devanagari script only.\n"
+            "- en_gu: Keep English words, write phonetically in Gujarati script only.\n"
+            f"Target mode: {target_mode}\n\n"
+            f"Text:\n{value}"
+        )
+
+        try:
+            response = self._generate_content(prompt, temperature=0.1)
+            converted = self._extract_text(response).strip()
+            return converted or value
+        except Exception:
+            return value
 
     def summarize_memory(
         self,
@@ -295,6 +329,8 @@ class GeminiClient:
         plan: dict,
         memory_summary: str,
         memory_key_facts: list[str],
+        context_constraints: dict[str, Any],
+        grounded_facts: list[str],
     ) -> str:
         context_parts: list[str] = []
         for idx, citation in enumerate(citations[:6], start=1):
@@ -316,6 +352,12 @@ class GeminiClient:
         )
 
         required_facts = "\n".join(f"- {item}" for item in plan.get("required_facts", []) if item)
+        constraints = "\n".join(
+            f"- {key}: {value}"
+            for key, value in context_constraints.items()
+            if value not in (None, "", [], {})
+        )
+        deterministic_facts = "\n".join(f"- {item}" for item in grounded_facts if item)
 
         return (
             "You are a respectful scripture assistant for Tartam texts.\n"
@@ -331,6 +373,8 @@ class GeminiClient:
             "Keep the tone devotional and practical, not overly academic.\n\n"
             f"Planned intent: {plan.get('intent', 'answer_user_question_from_scripture')}\n"
             f"Required facts to verify:\n{required_facts or '- derive from strongest citations'}\n\n"
+            f"User reference constraints:\n{constraints or '- none'}\n\n"
+            f"Deterministic facts:\n{deterministic_facts or '- none'}\n\n"
             f"Session memory summary:\n{memory_summary or 'N/A'}\n\n"
             f"Session key facts:\n{self._format_bullets(memory_key_facts)}\n\n"
             f"Recent Chat Context:\n{history or 'N/A'}\n\n"

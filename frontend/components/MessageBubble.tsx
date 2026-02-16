@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import clsx from "clsx";
 
-import { ChatMessage } from "../lib/types";
+import { convertAnswer } from "../lib/api";
+import { ChatMessage, ConvertMode } from "../lib/types";
 import { isGarbledText, parseAssistantSections, safeDisplayText } from "../lib/text";
 import { CitationCard } from "./CitationCard";
 
@@ -10,10 +12,40 @@ interface MessageBubbleProps {
   message: ChatMessage;
 }
 
+const CONVERT_OPTIONS: Array<{ label: string; value: ConvertMode }> = [
+  { label: "English", value: "en" },
+  { label: "Hindi", value: "hi" },
+  { label: "Gujarati", value: "gu" },
+  { label: "Hindi (Roman)", value: "hi_latn" },
+  { label: "Gujarati (Roman)", value: "gu_latn" },
+  { label: "English in Hindi script", value: "en_deva" },
+  { label: "English in Gujarati script", value: "en_gu" }
+];
+
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const sections = !isUser ? parseAssistantSections(message.text) : [];
   const hasGarbled = isGarbledText(message.text);
+  const [convertMode, setConvertMode] = useState<ConvertMode>("en");
+  const [convertedText, setConvertedText] = useState("");
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState("");
+
+  async function onConvert() {
+    if (isUser || !message.text.trim()) {
+      return;
+    }
+    setConverting(true);
+    setConvertError("");
+    try {
+      const response = await convertAnswer(message.text, convertMode);
+      setConvertedText(response.text);
+    } catch (error) {
+      setConvertError(error instanceof Error ? error.message : "Conversion failed");
+    } finally {
+      setConverting(false);
+    }
+  }
 
   return (
     <article className="space-y-3">
@@ -49,6 +81,39 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           ) : (
             <p className="whitespace-pre-wrap text-[#4a2e1d]">{safeDisplayText(message.text, "No readable response text.")}</p>
           )}
+
+          {!isUser ? (
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="rounded-md border border-[#d2a67d] bg-[#fffaf1] px-2 py-1 text-xs text-[#5f3a21]"
+                  value={convertMode}
+                  onChange={(event) => setConvertMode(event.target.value as ConvertMode)}
+                >
+                  {CONVERT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="rounded-md bg-[#c66a2e] px-2.5 py-1 text-xs font-medium text-[#fff7ef] hover:bg-[#b75f28] disabled:opacity-60"
+                  disabled={converting}
+                  onClick={() => void onConvert()}
+                >
+                  {converting ? "Converting..." : "Convert answer"}
+                </button>
+              </div>
+
+              {convertedText ? (
+                <div className="rounded-xl border border-[#e1bd98] bg-[#fffaf3] p-2 text-sm text-[#4a2e1d]">
+                  <p className="whitespace-pre-wrap">{convertedText}</p>
+                </div>
+              ) : null}
+              {convertError ? <p className="text-xs text-[#a1451f]">{convertError}</p> : null}
+            </div>
+          ) : null}
 
           <p className={clsx("mt-3 text-[11px]", isUser ? "text-[#fde4c8]" : "text-[#8b5f3c]")}>{message.styleTag}</p>
         </div>

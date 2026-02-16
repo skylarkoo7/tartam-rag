@@ -88,6 +88,16 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS session_context (
+                    session_id TEXT PRIMARY KEY,
+                    granth_name TEXT,
+                    prakran_number INTEGER,
+                    prakran_range_start INTEGER,
+                    prakran_range_end INTEGER,
+                    chopai_number INTEGER,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS ingest_runs (
                     run_id TEXT PRIMARY KEY,
                     files_processed INTEGER NOT NULL,
@@ -111,6 +121,9 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_messages_session_created
                 ON messages (session_id, created_at);
+
+                CREATE INDEX IF NOT EXISTS idx_chopai_units_granth_prakran_chopai
+                ON chopai_units (granth_name, prakran_name, chopai_number);
                 """
             )
 
@@ -320,6 +333,104 @@ class Database:
             ).fetchall()
         return list(reversed(rows))
 
+    def has_prakran_metadata(self) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM chopai_units
+                WHERE prakran_name IS NOT NULL
+                AND TRIM(prakran_name) <> ''
+                AND LOWER(TRIM(prakran_name)) <> 'unknown prakran'
+                """
+            ).fetchone()
+        return bool(int(row["count"])) if row else False
+
+    def lookup_reference_units(
+        self,
+        *,
+        granth_name: str | None = None,
+        chopai_number: int | None = None,
+        prakran_number: int | None = None,
+        prakran_range: tuple[int, int] | None = None,
+        limit: int = 60,
+    ) -> list[RetrievedUnit]:
+        where: list[str] = []
+        args: list[Any] = []
+
+        if granth_name:
+            where.append("granth_name = ?")
+            args.append(granth_name)
+
+        if chopai_number is not None:
+            where.append("CAST(chopai_number AS INTEGER) = ?")
+            args.append(chopai_number)
+
+        if prakran_number is not None:
+            clause, clause_args = _build_prakran_number_clause(prakran_number)
+            where.append(clause)
+            args.extend(clause_args)
+
+        if prakran_range is not None:
+            start, end = sorted(prakran_range)
+            numbers = list(range(start, min(end, start + 20) + 1))
+            range_clauses: list[str] = []
+            for number in numbers:
+                clause, clause_args = _build_prakran_number_clause(number)
+                range_clauses.append(clause)
+                args.extend(clause_args)
+            if range_clauses:
+                where.append(f"({' OR '.join(range_clauses)})")
+
+        sql = "SELECT * FROM chopai_units"
+        if where:
+            sql += f" WHERE {' AND '.join(where)}"
+        sql += " ORDER BY page_number ASC, id ASC LIMIT ?"
+        args.append(max(1, limit))
+
+        with self.connect() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        return [_row_to_unit(row) for row in rows]
+
+    def count_chopai_reference(
+        self,
+        *,
+        granth_name: str | None = None,
+        prakran_number: int | None = None,
+        prakran_range: tuple[int, int] | None = None,
+    ) -> int:
+        where = [
+            "chopai_number IS NOT NULL",
+            "TRIM(chopai_number) <> ''",
+        ]
+        args: list[Any] = []
+
+        if granth_name:
+            where.append("granth_name = ?")
+            args.append(granth_name)
+
+        if prakran_number is not None:
+            clause, clause_args = _build_prakran_number_clause(prakran_number)
+            where.append(clause)
+            args.extend(clause_args)
+        elif prakran_range is not None:
+            start, end = sorted(prakran_range)
+            numbers = list(range(start, min(end, start + 20) + 1))
+            range_clauses: list[str] = []
+            for number in numbers:
+                clause, clause_args = _build_prakran_number_clause(number)
+                range_clauses.append(clause)
+                args.extend(clause_args)
+            if range_clauses:
+                where.append(f"({' OR '.join(range_clauses)})")
+
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(DISTINCT chopai_number) AS count FROM chopai_units WHERE {' AND '.join(where)}",
+                args,
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
     def get_session_memory(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(
@@ -361,6 +472,53 @@ class Database:
                     updated_at=CURRENT_TIMESTAMP
                 """,
                 (session_id, summary_text.strip(), payload),
+            )
+
+    def get_session_context(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id, granth_name, prakran_number, prakran_range_start, prakran_range_end, chopai_number, updated_at
+                FROM session_context
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return row if row else None
+
+    def upsert_session_context(
+        self,
+        *,
+        session_id: str,
+        granth_name: str | None,
+        prakran_number: int | None,
+        prakran_range_start: int | None,
+        prakran_range_end: int | None,
+        chopai_number: int | None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_context (
+                    session_id, granth_name, prakran_number, prakran_range_start, prakran_range_end, chopai_number, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    granth_name=excluded.granth_name,
+                    prakran_number=excluded.prakran_number,
+                    prakran_range_start=excluded.prakran_range_start,
+                    prakran_range_end=excluded.prakran_range_end,
+                    chopai_number=excluded.chopai_number,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    session_id,
+                    granth_name,
+                    prakran_number,
+                    prakran_range_start,
+                    prakran_range_end,
+                    chopai_number,
+                ),
             )
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -453,3 +611,22 @@ def _build_fts_query(query: str) -> str:
         parts.append(f"{token}*")
 
     return " OR ".join(parts)
+
+
+def _build_prakran_number_clause(prakran_number: int) -> tuple[str, list[str]]:
+    value = str(prakran_number)
+    clause = (
+        "(prakran_name LIKE ? "
+        "OR chunk_text LIKE ? "
+        "OR chunk_text LIKE ? "
+        "OR normalized_text LIKE ? "
+        "OR normalized_text LIKE ?)"
+    )
+    args = [
+        f"%{value}%",
+        f"%-{value}-%",
+        f"% {value} %",
+        f"%-{value}-%",
+        f"% {value} %",
+    ]
+    return clause, args

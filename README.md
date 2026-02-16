@@ -194,10 +194,16 @@ make test
 ## Notes / Limitations
 
 - Gujarati PDFs may require AES decryption support from `pycryptodome`.
-- OCR fallback is optional and disabled by default.
+- OCR fallback is enabled by default and can be tuned via `.env`.
 - Without Gemini key, chat answering is disabled (agentic mode requires Gemini for reasoning).
 - `text-embedding-004` is deprecated by Google; this project now uses `gemini-embedding-001`.
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
+
+Recommended OCR settings (already enabled in sample env):
+- `ENABLE_OCR_FALLBACK=true`
+- `OCR_QUALITY_THRESHOLD=0.22`
+- `OCR_FORCE_ON_GARBLED=true`
+- `INGEST_GEMINI_OCR_MAX_PAGES=20`
 
 ## Frontend Status (answer to "what about frontend?")
 

@@ -43,7 +43,13 @@ class GeminiClient:
 
         if api_key and genai:
             try:
-                self.client = genai.Client(api_key=api_key)
+                if genai_types is not None:
+                    self.client = genai.Client(
+                        api_key=api_key,
+                        http_options=genai_types.HttpOptions(timeout=30_000),
+                    )
+                else:
+                    self.client = genai.Client(api_key=api_key)
             except Exception:
                 self.client = None
 

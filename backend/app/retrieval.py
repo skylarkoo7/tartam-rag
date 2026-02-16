@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .db import Database, RetrievedUnit
 from .gemini_client import GeminiClient
 from .language import query_variants
+from .text_quality import garbled_ratio
 from .vector_store import VectorStore
 
 
@@ -58,7 +59,12 @@ class RetrievalService:
                         vector_ranked.append((unit, score))
 
         fused = reciprocal_rank_fusion(lexical_ranked, vector_ranked, k=50)
-        return fused[:top_k]
+        reranked = sorted(
+            fused,
+            key=lambda item: item.score * readability_multiplier(item.unit),
+            reverse=True,
+        )
+        return reranked[:top_k]
 
 
 def reciprocal_rank_fusion(
@@ -95,3 +101,19 @@ def reciprocal_rank_fusion(
 
     ranked_ids = sorted(acc.keys(), key=lambda item_id: acc[item_id], reverse=True)
     return [RetrievalResult(unit=units[item_id], score=acc[item_id]) for item_id in ranked_ids]
+
+
+def readability_multiplier(unit: RetrievedUnit) -> float:
+    sample = "\n".join(
+        [
+            unit.chunk_text[:1200],
+            unit.meaning_text[:400],
+            " ".join(unit.chopai_lines[:2])[:300],
+        ]
+    )
+    ratio = garbled_ratio(sample)
+    if ratio >= 0.03:
+        return 0.35
+    if ratio >= 0.015:
+        return 0.60
+    return 1.0

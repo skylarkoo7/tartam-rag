@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PyPDF2 import PdfReader
 
+from .text_quality import is_garbled_text, likely_misencoded_indic_text
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -29,6 +31,9 @@ class PDFExtractionError(RuntimeError):
     pass
 
 
+_OCR_DEPS_MISSING_WARNED = False
+
+
 def _text_quality_score(text: str) -> float:
     if not text:
         return 0.0
@@ -44,7 +49,12 @@ def _text_quality_score(text: str) -> float:
     return max(0.0, min(1.0, (0.6 * printable_ratio) + (0.6 * alpha_ratio) - (2.0 * weird_ratio)))
 
 
-def extract_pdf_pages(pdf_path: Path, enable_ocr_fallback: bool = False) -> tuple[list[PageText], int]:
+def extract_pdf_pages(
+    pdf_path: Path,
+    enable_ocr_fallback: bool = False,
+    ocr_quality_threshold: float = 0.22,
+    force_on_garbled: bool = True,
+) -> tuple[list[PageText], int]:
     try:
         reader = PdfReader(str(pdf_path))
     except Exception as exc:  # pragma: no cover - parser dependent
@@ -91,13 +101,21 @@ def extract_pdf_pages(pdf_path: Path, enable_ocr_fallback: bool = False) -> tupl
         method = "pdf"
 
         text = raw
-        if enable_ocr_fallback and quality < 0.12:
+        should_ocr = enable_ocr_fallback and (
+            quality < max(0.0, min(1.0, ocr_quality_threshold))
+            or (force_on_garbled and is_garbled_text(raw))
+            or likely_misencoded_indic_text(raw)
+        )
+        if should_ocr:
             ocr = _extract_page_ocr(pdf_path, idx)
             if ocr:
-                text = ocr
-                method = "ocr"
-                quality = _text_quality_score(text)
-                ocr_pages += 1
+                ocr_quality = _text_quality_score(ocr)
+                use_ocr = is_garbled_text(raw) or (ocr_quality >= quality + 0.02)
+                if use_ocr:
+                    text = ocr
+                    method = "ocr"
+                    quality = ocr_quality
+                    ocr_pages += 1
 
         pages.append(
             PageText(
@@ -112,8 +130,13 @@ def extract_pdf_pages(pdf_path: Path, enable_ocr_fallback: bool = False) -> tupl
 
 
 def _extract_page_ocr(pdf_path: Path, page_number: int) -> str:
+    global _OCR_DEPS_MISSING_WARNED
     if convert_from_path is None or pytesseract is None:
-        logger.warning("OCR dependencies missing; skipping OCR fallback for %s page %s", pdf_path, page_number)
+        if not _OCR_DEPS_MISSING_WARNED:
+            logger.warning(
+                "OCR dependencies missing; skipping local OCR fallback. Install pdf2image + pytesseract + tesseract binary."
+            )
+            _OCR_DEPS_MISSING_WARNED = True
         return ""
 
     try:  # pragma: no cover - OCR integration

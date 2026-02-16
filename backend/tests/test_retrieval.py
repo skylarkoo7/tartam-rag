@@ -1,5 +1,5 @@
 from app.db import RetrievedUnit
-from app.retrieval import reciprocal_rank_fusion
+from app.retrieval import readability_multiplier, reciprocal_rank_fusion
 
 
 def _unit(idx: int) -> RetrievedUnit:
@@ -30,3 +30,11 @@ def test_rrf_prioritizes_shared_candidates() -> None:
     ids = [item.unit.id for item in fused]
 
     assert ids[0] == "id-2"
+
+
+def test_readability_multiplier_penalizes_garbled_text() -> None:
+    clean = _unit(10)
+    garbled = _unit(11)
+    garbled.chunk_text = "Ÿ¢£¤¥¦§¨©ª«¬®±²³´µ¶·¸¹º»¼½¾¿"
+
+    assert readability_multiplier(clean) > readability_multiplier(garbled)

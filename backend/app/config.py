@@ -32,7 +32,10 @@ class Settings:
     request_rate_limit_per_min: int = 40
 
     allow_debug_payloads: bool = True
-    enable_ocr_fallback: bool = False
+    enable_ocr_fallback: bool = True
+    ocr_quality_threshold: float = 0.22
+    ocr_force_on_garbled: bool = True
+    ingest_gemini_ocr_max_pages: int = 20
     allow_gemini_page_ocr_recovery: bool = True
 
     @property
@@ -121,6 +124,11 @@ def get_settings() -> Settings:
 
     settings.allow_debug_payloads = _to_bool(os.getenv("ALLOW_DEBUG_PAYLOADS"), settings.allow_debug_payloads)
     settings.enable_ocr_fallback = _to_bool(os.getenv("ENABLE_OCR_FALLBACK"), settings.enable_ocr_fallback)
+    settings.ocr_quality_threshold = _to_float(os.getenv("OCR_QUALITY_THRESHOLD"), settings.ocr_quality_threshold)
+    settings.ocr_force_on_garbled = _to_bool(os.getenv("OCR_FORCE_ON_GARBLED"), settings.ocr_force_on_garbled)
+    settings.ingest_gemini_ocr_max_pages = _to_int(
+        os.getenv("INGEST_GEMINI_OCR_MAX_PAGES"), settings.ingest_gemini_ocr_max_pages
+    )
     settings.allow_gemini_page_ocr_recovery = _to_bool(
         os.getenv("ALLOW_GEMINI_PAGE_OCR_RECOVERY"), settings.allow_gemini_page_ocr_recovery
     )

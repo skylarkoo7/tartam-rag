@@ -8,8 +8,10 @@ from pathlib import Path
 from .config import Settings
 from .db import Database
 from .gemini_client import GeminiClient
+from .language import normalize_text
 from .parsing import ParsedUnit, parse_pdf_to_units
-from .pdf_extract import PDFExtractionError, extract_pdf_pages
+from .pdf_extract import PDFExtractionError, PageText, extract_pdf_pages
+from .text_quality import is_garbled_text, likely_misencoded_indic_text
 from .vector_store import VectorStore
 
 
@@ -52,8 +54,21 @@ class IngestionService:
                 pages, ocr_count = extract_pdf_pages(
                     pdf_path,
                     enable_ocr_fallback=self.settings.enable_ocr_fallback,
+                    ocr_quality_threshold=self.settings.ocr_quality_threshold,
+                    force_on_garbled=self.settings.ocr_force_on_garbled,
                 )
-                stats.ocr_pages += ocr_count
+
+                gemini_ocr_count = 0
+                if self.settings.enable_ocr_fallback and self.settings.allow_gemini_page_ocr_recovery:
+                    remaining_ocr_budget = max(0, self.settings.ingest_gemini_ocr_max_pages - stats.ocr_pages)
+                    if remaining_ocr_budget > 0:
+                        pages, gemini_ocr_count = self._recover_pages_with_gemini(
+                            pdf_path=pdf_path,
+                            pages=pages,
+                            budget=remaining_ocr_budget,
+                        )
+
+                stats.ocr_pages += ocr_count + gemini_ocr_count
                 units = parse_pdf_to_units(pdf_path, pages)
                 normalized_units = self._normalize_units(units)
                 all_records.extend(normalized_units)
@@ -140,3 +155,63 @@ class IngestionService:
             )
 
         return records
+
+    def _recover_pages_with_gemini(
+        self,
+        pdf_path: Path,
+        pages: list[PageText],
+        budget: int,
+    ) -> tuple[list[PageText], int]:
+        if budget <= 0 or not self.gemini.enabled:
+            return pages, 0
+
+        candidates = [
+            page
+            for page in pages
+            if (
+                page.quality_score < self.settings.ocr_quality_threshold
+                or is_garbled_text(page.text)
+                or likely_misencoded_indic_text(page.text)
+            )
+        ]
+        if not candidates:
+            return pages, 0
+
+        # Prioritize garbled pages first, then lower quality.
+        candidates.sort(key=lambda page: (0 if is_garbled_text(page.text) else 1, page.quality_score))
+        recoverable = candidates[:budget]
+
+        replacement_text: dict[int, str] = {}
+        recovered_count = 0
+        for page in recoverable:
+            ocr_text = normalize_text(self.gemini.ocr_pdf_page(str(pdf_path), page.page_number))
+            if not ocr_text:
+                continue
+
+            # Skip weak OCR outputs unless source page is clearly garbled.
+            if not is_garbled_text(page.text):
+                if is_garbled_text(ocr_text, threshold=0.02) or len(ocr_text) < max(40, int(len(page.text) * 0.5)):
+                    continue
+
+            replacement_text[page.page_number] = ocr_text
+            recovered_count += 1
+
+        if recovered_count == 0:
+            return pages, 0
+
+        upgraded_pages: list[PageText] = []
+        for page in pages:
+            replacement = replacement_text.get(page.page_number)
+            if replacement is None:
+                upgraded_pages.append(page)
+                continue
+            upgraded_pages.append(
+                PageText(
+                    page_number=page.page_number,
+                    text=replacement,
+                    extraction_method="gemini_ocr",
+                    quality_score=max(page.quality_score, 0.65),
+                )
+            )
+
+        return upgraded_pages, recovered_count

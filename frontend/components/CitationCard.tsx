@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { Citation } from "../lib/types";
-import { safeDisplayText } from "../lib/text";
+import { safeDisplayText, scriptClassName } from "../lib/text";
 
 interface CitationCardProps {
   citation: Citation;
@@ -33,6 +33,9 @@ export function CitationCard({ citation, onSelect, active = false }: CitationCar
     () => safeDisplayText(citation.next_context ?? "", ""),
     [citation.next_context]
   );
+
+  const chopaiFontClass = scriptClassName(chopaiPreview);
+  const meaningFontClass = scriptClassName(meaning);
 
   return (
     <article className={`rounded-xl border p-3 transition ${active ? "border-[#cc7d33] bg-[#fff5e8]" : "border-[#e7d5c3] bg-[#fffdf9]"}`}>
@@ -65,25 +68,25 @@ export function CitationCard({ citation, onSelect, active = false }: CitationCar
           </div>
         </div>
 
-        <p className="mt-2 text-sm text-[#5f3a21]">{chopaiPreview}</p>
+        <p className={`mt-2 text-sm text-[#5f3a21] ${chopaiFontClass}`}>{chopaiPreview}</p>
       </button>
 
       {expanded ? (
         <div className="mt-3 space-y-2 border-t border-[#efd7c2] pt-3 text-sm text-[#5f3a21]">
-          <p>
+          <p className={meaningFontClass}>
             <span className="font-semibold text-[#4a2e1d]">Meaning: </span>
             {meaning}
           </p>
 
           {prevContext ? (
-            <p>
+            <p className={scriptClassName(prevContext)}>
               <span className="font-semibold text-[#4a2e1d]">Previous context: </span>
               {prevContext}
             </p>
           ) : null}
 
           {nextContext ? (
-            <p>
+            <p className={scriptClassName(nextContext)}>
               <span className="font-semibold text-[#4a2e1d]">Next context: </span>
               {nextContext}
             </p>

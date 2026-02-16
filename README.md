@@ -5,6 +5,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 - LLM-based explanations (not just retrieval snippets)
 - Inline chopai cards in chat UI (with meaning + source metadata)
 - Right-side source PDF viewer (opens cited PDF on referenced page)
+- PDF page API for citations (`GET /api/pdf/{citation_id}`)
 - Multilingual interaction support: Hindi, Gujarati, English, Hinglish (`kaise ho`), Gujarati-in-English (`kem cho`)
 - Structured query understanding for references like:
   - `singar granth prakran 14 to 19 summary and explanation`
@@ -52,6 +53,7 @@ Implemented in this repository:
 - Filters: language mode, granth, prakran
 - Session history drawer (server-backed sessions + local current-session id)
 - Interactive citation cards that sync with right-side PDF viewer
+- LLM runtime health badge (shows if Gemini is available or quota/network blocked)
 - One-click ingestion trigger button
 
 ## Repository Structure
@@ -152,6 +154,7 @@ python -m scripts.run_ingest
 - `GET /api/sessions`
 - `POST /api/chat`
 - `POST /api/convert`
+- `GET /api/pdf/{citation_id}`
 
 ### `POST /api/chat` example
 
@@ -215,12 +218,13 @@ make test
 - Without Gemini key, chat answering is disabled (agentic mode requires Gemini for reasoning).
 - `text-embedding-004` is deprecated by Google; this project now uses `gemini-embedding-001`.
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
+- Gemini free-tier can hit `429 RESOURCE_EXHAUSTED`; UI/API now surfaces this explicitly via health/debug fields.
 
 Recommended OCR settings (already enabled in sample env):
 - `ENABLE_OCR_FALLBACK=true`
 - `OCR_QUALITY_THRESHOLD=0.22`
 - `OCR_FORCE_ON_GARBLED=true`
-- `INGEST_GEMINI_OCR_MAX_PAGES=20`
+- `INGEST_GEMINI_OCR_MAX_PAGES=200`
 
 ## Frontend Status (answer to "what about frontend?")
 

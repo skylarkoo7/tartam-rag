@@ -26,6 +26,9 @@ class Settings:
     gemini_api_key: str | None = None
     gemini_chat_model: str = "gemini-3-flash-preview"
     gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_ocr_models: list[str] = field(
+        default_factory=lambda: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-flash-preview"]
+    )
 
     retrieval_top_k: int = 6
     minimum_grounding_score: float = 0.015
@@ -35,7 +38,7 @@ class Settings:
     enable_ocr_fallback: bool = True
     ocr_quality_threshold: float = 0.22
     ocr_force_on_garbled: bool = True
-    ingest_gemini_ocr_max_pages: int = 20
+    ingest_gemini_ocr_max_pages: int = 200
     allow_gemini_page_ocr_recovery: bool = True
 
     @property
@@ -111,6 +114,7 @@ def get_settings() -> Settings:
     settings.gemini_api_key = os.getenv("GEMINI_API_KEY", settings.gemini_api_key)
     settings.gemini_chat_model = os.getenv("GEMINI_CHAT_MODEL", settings.gemini_chat_model)
     settings.gemini_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", settings.gemini_embedding_model)
+    settings.gemini_ocr_models = _split_csv(os.getenv("GEMINI_OCR_MODELS"), settings.gemini_ocr_models)
 
     settings.corpus_dirs = _split_csv(os.getenv("CORPUS_DIRS"), settings.corpus_dirs)
 

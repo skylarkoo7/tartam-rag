@@ -354,7 +354,7 @@ def _should_carry_context(text: str, asks_prakran: bool, asks_chopai: bool) -> b
         return True
     if _mentions_followup(text):
         return True
-    return len(text.split()) <= 8
+    return False
 
 
 def _mentions_followup(text: str) -> bool:

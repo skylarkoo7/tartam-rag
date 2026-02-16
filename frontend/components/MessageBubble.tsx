@@ -5,7 +5,7 @@ import clsx from "clsx";
 
 import { convertAnswer } from "../lib/api";
 import { ChatMessage, ConvertMode } from "../lib/types";
-import { isGarbledText, parseAssistantSections, safeDisplayText } from "../lib/text";
+import { isGarbledText, parseAssistantSections, safeDisplayText, scriptClassName } from "../lib/text";
 import { CitationCard } from "./CitationCard";
 
 interface MessageBubbleProps {
@@ -28,6 +28,7 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
   const isUser = message.role === "user";
   const sections = !isUser ? parseAssistantSections(message.text) : [];
   const hasGarbled = isGarbledText(message.text);
+  const messageFontClass = scriptClassName(message.text);
   const [convertMode, setConvertMode] = useState<ConvertMode>("en");
   const [convertedText, setConvertedText] = useState("");
   const [converting, setConverting] = useState(false);
@@ -63,7 +64,7 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
           )}
         >
           {isUser ? (
-            <p className="whitespace-pre-wrap">{message.text}</p>
+            <p className={clsx("whitespace-pre-wrap", messageFontClass)}>{message.text}</p>
           ) : hasGarbled ? (
             <div className="space-y-2">
               <p className="font-medium text-[#9a4b1d]">Source encoding issue detected</p>
@@ -76,12 +77,16 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
               {sections.map((section) => (
                 <section key={section.title} className="space-y-1">
                   <h4 className="text-xs font-semibold uppercase tracking-wide text-[#8b5f3c]">{section.title}</h4>
-                  <p className="whitespace-pre-wrap text-[#4a2e1d]">{safeDisplayText(section.content, "")}</p>
+                  <p className={clsx("whitespace-pre-wrap text-[#4a2e1d]", scriptClassName(section.content))}>
+                    {safeDisplayText(section.content, "")}
+                  </p>
                 </section>
               ))}
             </div>
           ) : (
-            <p className="whitespace-pre-wrap text-[#4a2e1d]">{safeDisplayText(message.text, "No readable response text.")}</p>
+            <p className={clsx("whitespace-pre-wrap text-[#4a2e1d]", messageFontClass)}>
+              {safeDisplayText(message.text, "No readable response text.")}
+            </p>
           )}
 
           {!isUser ? (
@@ -110,7 +115,7 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
 
               {convertedText ? (
                 <div className="rounded-xl border border-[#edd8c2] bg-[#fffaf3] p-2 text-sm text-[#4a2e1d]">
-                  <p className="whitespace-pre-wrap">{convertedText}</p>
+                  <p className={clsx("whitespace-pre-wrap", scriptClassName(convertedText))}>{convertedText}</p>
                 </div>
               ) : null}
               {convertError ? <p className="text-xs text-[#a1451f]">{convertError}</p> : null}

@@ -35,13 +35,18 @@ class GeminiClient:
         api_key: str | None,
         chat_model: str,
         embedding_model: str,
+        ocr_models: list[str] | None = None,
     ):
         self.api_key = api_key
         self.chat_model = chat_model
         self.embedding_model = embedding_model
+        self.ocr_models = [item.strip() for item in (ocr_models or []) if item.strip()] or [chat_model]
         self._page_ocr_cache: dict[str, str] = {}
         self._legacy_decode_cache: dict[str, str] = {}
         self._embedding_dim: int = 768
+        self.last_generation_error: str | None = None
+        self.last_embedding_error: str | None = None
+        self.last_ocr_error: str | None = None
         self.client: Any | None = None
 
         if api_key and genai:
@@ -72,12 +77,18 @@ class GeminiClient:
             resp = self.client.models.embed_content(model=self.embedding_model, contents=text)
             values = self._extract_embedding_values(resp)
             if not values:
+                self.last_embedding_error = "No embedding values returned."
                 return self._fallback_embedding(text)
             vector = [float(v) for v in values]
             if len(vector) != self._embedding_dim:
+                self.last_embedding_error = (
+                    f"Embedding dimension mismatch: expected {self._embedding_dim}, got {len(vector)}."
+                )
                 return self._fallback_embedding(text)
+            self.last_embedding_error = None
             return vector
-        except Exception:
+        except Exception as exc:
+            self.last_embedding_error = f"{type(exc).__name__}: {exc}"
             return self._fallback_embedding(text)
 
     def embed_many(self, texts: Iterable[str]) -> list[list[float]]:
@@ -99,10 +110,15 @@ class GeminiClient:
                     raise ValueError("Embedding batch size mismatch")
                 for text, vector in zip(batch, matrix):
                     if len(vector) != self._embedding_dim:
+                        self.last_embedding_error = (
+                            f"Embedding dimension mismatch in batch: expected {self._embedding_dim}, got {len(vector)}."
+                        )
                         vectors.append(_hash_embedding(text or "empty", dim=self._embedding_dim))
                     else:
                         vectors.append(vector)
-            except Exception:
+                self.last_embedding_error = None
+            except Exception as exc:
+                self.last_embedding_error = f"{type(exc).__name__}: {exc}"
                 vectors.extend([_hash_embedding(text or "empty", dim=self._embedding_dim) for text in batch])
 
         return vectors
@@ -237,19 +253,27 @@ class GeminiClient:
             return cached
 
         prompt = (
-            "The following text is scripture extracted from a legacy-font PDF and appears mojibake/garbled. "
-            "Recover it into readable Unicode in the original language (Hindi or Gujarati). "
-            "Preserve line breaks and numbering where possible. "
-            "Output only corrected text, no explanation.\n\n"
+            "The following text is mojibake from legacy Hindi/Gujarati font extraction. "
+            "Convert it into readable Unicode (Devanagari or Gujarati). "
+            "Do not repeat garbled Latin symbols. "
+            "Preserve numbering and line breaks. Output only corrected text.\n\n"
             f"Text:\n{value}"
         )
         try:
             response = self._generate_content(prompt, temperature=0.0)
             recovered = self._extract_text(response).strip()
-            if not recovered:
-                self._legacy_decode_cache[key] = value
-                return value
-            if is_garbled_text(recovered, threshold=0.02):
+            if not recovered or recovered == value or is_garbled_text(recovered, threshold=0.02):
+                second_prompt = (
+                    "Decode this garbled Indic text into proper Unicode script. "
+                    "Scripture domain, devotional context. "
+                    "Return only decoded text in Devanagari or Gujarati, never in Latin mojibake.\n\n"
+                    f"Text:\n{value}"
+                )
+                response2 = self._generate_content(second_prompt, temperature=0.1)
+                recovered2 = self._extract_text(response2).strip()
+                if recovered2 and recovered2 != value and not is_garbled_text(recovered2, threshold=0.03):
+                    self._legacy_decode_cache[key] = recovered2
+                    return recovered2
                 self._legacy_decode_cache[key] = value
                 return value
             self._legacy_decode_cache[key] = recovered
@@ -359,11 +383,11 @@ class GeminiClient:
                 except Exception:
                     image_part = {"mime_type": "image/png", "data": image_bytes}
 
-            response = self._generate_content([prompt, image_part], temperature=0.0)
-            text = self._extract_text(response).strip()
+            text = self._ocr_from_image(prompt, image_part)
             self._page_ocr_cache[cache_key] = text
             return text
-        except Exception:
+        except Exception as exc:
+            self.last_ocr_error = str(exc)
             return ""
 
     def _build_grounded_prompt(
@@ -428,12 +452,12 @@ class GeminiClient:
             f"Citations:\n{'\n\n'.join(context_parts)}\n"
         )
 
-    def _generate_content(self, contents: Any, temperature: float | None = None) -> Any:
+    def _generate_content(self, contents: Any, temperature: float | None = None, model: str | None = None) -> Any:
         if not self.enabled or self.client is None:
             raise RuntimeError("Gemini client unavailable")
 
         kwargs: dict[str, Any] = {
-            "model": self.chat_model,
+            "model": model or self.chat_model,
             "contents": contents,
         }
         if temperature is not None:
@@ -446,10 +470,18 @@ class GeminiClient:
                 kwargs["config"] = {"temperature": temperature}
 
         try:
-            return self.client.models.generate_content(**kwargs)
+            response = self.client.models.generate_content(**kwargs)
+            self.last_generation_error = None
+            return response
         except Exception:
             kwargs.pop("config", None)
-            return self.client.models.generate_content(**kwargs)
+            try:
+                response = self.client.models.generate_content(**kwargs)
+                self.last_generation_error = None
+                return response
+            except Exception as exc:
+                self.last_generation_error = f"{type(exc).__name__}: {exc}"
+                raise
 
     def _extract_text(self, response: Any) -> str:
         text = getattr(response, "text", "") or ""
@@ -584,6 +616,32 @@ class GeminiClient:
         except Exception:
             # Keep deterministic fallback dimension.
             self._embedding_dim = 768
+
+    def _ocr_from_image(self, prompt: str, image_part: Any) -> str:
+        if not self.enabled:
+            return ""
+
+        last_error: Exception | None = None
+        payloads: list[Any] = [
+            [prompt, image_part],
+            [{"role": "user", "parts": [{"text": prompt}, image_part]}],
+        ]
+
+        for model in self.ocr_models:
+            for payload in payloads:
+                try:
+                    response = self._generate_content(payload, temperature=0.0, model=model)
+                    text = self._extract_text(response).strip()
+                    if text and len(text) >= 40:
+                        self.last_ocr_error = None
+                        return text
+                except Exception as exc:
+                    last_error = exc
+                    continue
+
+        if last_error is not None:
+            self.last_ocr_error = str(last_error)
+        return ""
 
     def _format_bullets(self, items: list[str]) -> str:
         cleaned = [str(item).strip() for item in items if str(item).strip()]

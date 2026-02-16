@@ -156,10 +156,13 @@ class ChatService:
 
                 if not explainable_pairs:
                     answer = (
-                        "I found related pages, but their text appears encoded incorrectly in the current PDF extraction. "
-                        "Please enable Gemini OCR recovery with API key or use OCR-processed PDFs for readable output."
+                        "I found related pages, but their text still appears unreadable from current extraction. "
+                        "Please re-index with OCR recovery enabled or use OCR-processed PDFs for reliable answers."
                     )
-                    follow_up = "You can also ask with exact granth and page number for targeted OCR recovery."
+                    ocr_hint = self._compact_error(self.gemini.last_ocr_error)
+                    if ocr_hint:
+                        answer = f"{answer}\n\nOCR status: {ocr_hint}"
+                    follow_up = "You can also ask with exact granth + prakran + page for targeted OCR recovery."
                     not_found = True
                 else:
                     evidence_units = [unit for unit, _ in explainable_pairs][: max(top_k, 4)]
@@ -174,19 +177,31 @@ class ChatService:
                         context_constraints=self._context_payload(query_context),
                         grounded_facts=grounded_facts,
                     )
-                    if query_context.requires_count and count_result is not None and count_result > 0:
-                        count_line = (
-                            f"Direct Answer: For the requested scope, I found {count_result} distinct chopai numbers in the indexed text.\n"
+                    if (
+                        generated.strip().lower().startswith("i could not find this clearly in available texts")
+                        and self.gemini.last_generation_error
+                    ):
+                        answer = render_in_style(
+                            "I could not generate a grounded explanation right now because the LLM call failed. "
+                            "Please retry after checking Gemini API connectivity/model access.",
+                            answer_style,
                         )
-                        if str(count_result) not in generated:
-                            generated = f"{count_line}\n{generated}"
-                    answer = render_in_style(generated, answer_style)
-                    if answer.strip().lower().startswith("i could not find this clearly in available texts"):
-                        follow_up = self._follow_up_for_not_found(query_context)
+                        follow_up = "Retry now or confirm GEMINI_API_KEY/model access from backend."
                         not_found = True
                     else:
-                        follow_up = None
-                        not_found = False
+                        if query_context.requires_count and count_result is not None and count_result > 0:
+                            count_line = (
+                                f"Direct Answer: For the requested scope, I found {count_result} distinct chopai numbers in the indexed text.\n"
+                            )
+                            if str(count_result) not in generated:
+                                generated = f"{count_line}\n{generated}"
+                        answer = render_in_style(generated, answer_style)
+                        if answer.strip().lower().startswith("i could not find this clearly in available texts"):
+                            follow_up = self._follow_up_for_not_found(query_context)
+                            not_found = True
+                        else:
+                            follow_up = None
+                            not_found = False
 
         updated_context = next_session_context(prior_context, query_context)
         self._persist_session_context(payload.session_id, updated_context)
@@ -214,6 +229,9 @@ class ChatService:
                 "plan": plan,
                 "query_context": self._context_payload(query_context),
                 "grounded_facts": grounded_facts,
+                "llm_enabled": self.gemini.enabled,
+                "llm_generation_error": self.gemini.last_generation_error,
+                "ocr_error": self.gemini.last_ocr_error,
             }
             if self.settings.allow_debug_payloads
             else None
@@ -349,6 +367,19 @@ class ChatService:
         elif query_context.requires_count:
             facts.append("Count result: no distinct chopai numbers found for requested scope.")
         return facts
+
+    def _compact_error(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        lowered = text.lower()
+        if "nodename nor servname provided" in lowered or "temporary failure in name resolution" in lowered:
+            return "Network/DNS issue while contacting Gemini."
+        if "permission" in lowered or "unauthorized" in lowered or "api key" in lowered:
+            return "Gemini authentication/permissions issue."
+        return text[:180]
 
     def _is_ambiguous_reference(
         self,

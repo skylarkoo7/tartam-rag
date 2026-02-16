@@ -38,6 +38,7 @@ def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiCli
         api_key=settings.gemini_api_key,
         chat_model=settings.gemini_chat_model,
         embedding_model=settings.gemini_embedding_model,
+        ocr_models=settings.gemini_ocr_models,
     )
 
     ingest = IngestionService(settings=settings, db=db, vectors=vectors, gemini=gemini)
@@ -73,6 +74,9 @@ def health() -> HealthResponse:
         db_ready=True,
         vector_ready=vectors.available,
         indexed_chunks=database.count_units(),
+        llm_enabled=gemini_client.enabled,
+        llm_generation_error=_compact_error(gemini_client.last_generation_error),
+        ocr_error=_compact_error(gemini_client.last_ocr_error),
     )
 
 
@@ -158,3 +162,19 @@ def citation_pdf(citation_id: str) -> FileResponse:
         filename=pdf_path.name,
         headers={"Content-Disposition": f'inline; filename="{pdf_path.name}"'},
     )
+
+
+def _compact_error(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if "resource_exhausted" in lowered or "quota exceeded" in lowered:
+        return "Gemini quota exhausted (free-tier limit hit)."
+    if "nodename nor servname provided" in lowered or "name resolution" in lowered:
+        return "Network/DNS issue while contacting Gemini."
+    if "api key" in lowered or "permission" in lowered or "unauthorized" in lowered:
+        return "Gemini authentication/permissions issue."
+    return text[:180]

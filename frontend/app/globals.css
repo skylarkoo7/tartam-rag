@@ -24,3 +24,15 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
+
+.font-latin {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.font-devanagari {
+  font-family: "Noto Sans Devanagari", "IBM Plex Sans", sans-serif;
+}
+
+.font-gujarati {
+  font-family: "Noto Sans Gujarati", "IBM Plex Sans", sans-serif;
+}

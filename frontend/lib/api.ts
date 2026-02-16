@@ -4,6 +4,7 @@ import {
   ConvertMode,
   ConvertResponse,
   FiltersResponse,
+  HealthResponse,
   MessageRecord,
   SessionRecord
 } from "./types";
@@ -31,6 +32,11 @@ export async function fetchHistory(sessionId: string): Promise<MessageRecord[]> 
 export async function fetchSessions(limit = 50): Promise<SessionRecord[]> {
   const resp = await fetch(`${API_BASE}/sessions?limit=${limit}`, { cache: "no-store" });
   return handleJson<SessionRecord[]>(resp);
+}
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  const resp = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+  return handleJson<HealthResponse>(resp);
 }
 
 export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {

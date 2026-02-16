@@ -60,18 +60,18 @@ export function FilterBar(props: FilterBarProps) {
 
       <label className="text-xs text-[#8b5f3c]">
         Prakran
-        <select
+        <input
+          list="prakran-options"
+          placeholder="Type Prakran (e.g. Prakran 14)"
           className="mt-1 w-full rounded-lg border border-[#dbc2ab] bg-white px-3 py-2 text-sm text-[#5b3923] focus:border-[#cb8854] focus:outline-none"
           value={prakran}
           onChange={(event) => onPrakran(event.target.value)}
-        >
-          <option value="">All prakrans</option>
+        />
+        <datalist id="prakran-options">
           {prakrans.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
+            <option key={item} value={item} />
           ))}
-        </select>
+        </datalist>
       </label>
     </div>
   );

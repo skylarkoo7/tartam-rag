@@ -97,3 +97,6 @@ class HealthResponse(BaseModel):
     db_ready: bool
     vector_ready: bool
     indexed_chunks: int
+    llm_enabled: bool = False
+    llm_generation_error: str | None = None
+    ocr_error: str | None = None

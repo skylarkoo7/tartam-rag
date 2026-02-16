@@ -10,6 +10,8 @@ import { CitationCard } from "./CitationCard";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  onCitationSelect?: (citation: ChatMessage["citations"][number]) => void;
+  activeCitationId?: string | null;
 }
 
 const CONVERT_OPTIONS: Array<{ label: string; value: ConvertMode }> = [
@@ -22,7 +24,7 @@ const CONVERT_OPTIONS: Array<{ label: string; value: ConvertMode }> = [
   { label: "English in Gujarati script", value: "en_gu" }
 ];
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, onCitationSelect, activeCitationId }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const sections = !isUser ? parseAssistantSections(message.text) : [];
   const hasGarbled = isGarbledText(message.text);
@@ -50,14 +52,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <article className="space-y-3">
       <div className={clsx("flex items-start gap-3", isUser ? "justify-end" : "justify-start")}>
-        {!isUser ? <div className="mt-1 h-7 w-7 rounded-full bg-[#9f5729] text-[11px] font-semibold text-[#fff7ef] grid place-items-center">AI</div> : null}
+        {!isUser ? <div className="mt-1 h-7 w-7 rounded-full bg-[#d8b99c] text-[11px] font-semibold text-[#5d3d24] grid place-items-center">AI</div> : null}
 
         <div
           className={clsx(
-            "max-w-3xl rounded-2xl px-4 py-3 text-[15px] leading-7",
+            "max-w-3xl rounded-2xl px-4 py-3 text-[15px] leading-7 shadow-[0_6px_18px_rgba(70,40,20,0.06)]",
             isUser
-              ? "bg-[#c66a2e] text-[#fff7ef]"
-              : "border border-[#d8b68f] bg-[#fff7ed] text-[#4a2e1d] shadow-[0_2px_12px_rgba(125,74,37,0.08)]"
+              ? "bg-[#be6a31] text-[#fff7ef]"
+              : "border border-[#e6d5c5] bg-white text-[#4a2e1d]"
           )}
         >
           {isUser ? (
@@ -83,10 +85,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
 
           {!isUser ? (
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-2 border-t border-[#f1e3d7] pt-3">
               <div className="flex flex-wrap items-center gap-2">
                 <select
-                  className="rounded-md border border-[#d2a67d] bg-[#fffaf1] px-2 py-1 text-xs text-[#5f3a21]"
+                  className="rounded-md border border-[#dcc3ac] bg-[#fffdf8] px-2 py-1 text-xs text-[#5f3a21]"
                   value={convertMode}
                   onChange={(event) => setConvertMode(event.target.value as ConvertMode)}
                 >
@@ -98,7 +100,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 </select>
                 <button
                   type="button"
-                  className="rounded-md bg-[#c66a2e] px-2.5 py-1 text-xs font-medium text-[#fff7ef] hover:bg-[#b75f28] disabled:opacity-60"
+                  className="rounded-md bg-[#bc682d] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#a95a24] disabled:opacity-60"
                   disabled={converting}
                   onClick={() => void onConvert()}
                 >
@@ -107,7 +109,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               </div>
 
               {convertedText ? (
-                <div className="rounded-xl border border-[#e1bd98] bg-[#fffaf3] p-2 text-sm text-[#4a2e1d]">
+                <div className="rounded-xl border border-[#edd8c2] bg-[#fffaf3] p-2 text-sm text-[#4a2e1d]">
                   <p className="whitespace-pre-wrap">{convertedText}</p>
                 </div>
               ) : null}
@@ -118,13 +120,18 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <p className={clsx("mt-3 text-[11px]", isUser ? "text-[#fde4c8]" : "text-[#8b5f3c]")}>{message.styleTag}</p>
         </div>
 
-        {isUser ? <div className="mt-1 h-7 w-7 rounded-full bg-[#e6c49e] text-[11px] font-semibold text-[#6d4326] grid place-items-center">You</div> : null}
+        {isUser ? <div className="mt-1 h-7 w-7 rounded-full bg-[#f0ddc8] text-[11px] font-semibold text-[#6d4326] grid place-items-center">You</div> : null}
       </div>
 
       {!isUser && message.citations.length > 0 ? (
         <div className="ml-10 grid gap-2">
           {message.citations.map((citation) => (
-            <CitationCard key={citation.citation_id} citation={citation} />
+            <CitationCard
+              key={citation.citation_id}
+              citation={citation}
+              onSelect={onCitationSelect}
+              active={activeCitationId === citation.citation_id}
+            />
           ))}
         </div>
       ) : null}

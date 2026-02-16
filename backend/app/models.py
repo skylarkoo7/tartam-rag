@@ -28,6 +28,7 @@ class Citation(BaseModel):
     granth_name: str
     prakran_name: str
     chopai_number: str | None = None
+    prakran_chopai_index: int | None = None
     chopai_lines: list[str]
     meaning_text: str
     page_number: int

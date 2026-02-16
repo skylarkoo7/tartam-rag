@@ -112,6 +112,10 @@ class ChatService:
 
             scores = [score for _, score in constrained]
             strong_results = [pair for pair in constrained if pair[1] >= self.settings.minimum_grounding_score]
+            strong_results = strong_results[: max(top_k, 4)]
+
+            if self._is_ambiguous_reference(query_context, strong_results):
+                strong_results = []
 
             if not strong_results:
                 answer = "I could not find this clearly in available texts."
@@ -136,6 +140,7 @@ class ChatService:
                             granth_name=unit.granth_name,
                             prakran_name=unit.prakran_name,
                             chopai_number=unit.chopai_number,
+                            prakran_chopai_index=unit.prakran_chopai_index,
                             chopai_lines=self._safe_chopai_lines(unit.chopai_lines),
                             meaning_text=safe_display_text(
                                 unit.meaning_text,
@@ -311,6 +316,12 @@ class ChatService:
         return []
 
     def _follow_up_for_not_found(self, query_context: QueryContext) -> str:
+        if query_context.granth_name is None and (
+            query_context.prakran_number is not None
+            or query_context.chopai_number is not None
+            or query_context.prakran_range_start is not None
+        ):
+            return "Please specify granth name as well, because this reference appears in multiple granths."
         if query_context.chopai_number is not None and query_context.prakran_number is not None:
             return (
                 "I could not match that exact granth/prakran/chopai combination in indexed text. "
@@ -338,6 +349,20 @@ class ChatService:
         elif query_context.requires_count:
             facts.append("Count result: no distinct chopai numbers found for requested scope.")
         return facts
+
+    def _is_ambiguous_reference(
+        self,
+        query_context: QueryContext,
+        strong_results: list[tuple[RetrievedUnit, float]],
+    ) -> bool:
+        if query_context.granth_name is not None:
+            return False
+        if not (query_context.chopai_number is not None or query_context.prakran_number is not None):
+            return False
+        if not strong_results:
+            return False
+        granths = {unit.granth_name for unit, _ in strong_results}
+        return len(granths) > 1
 
     def _context_payload(self, query_context: QueryContext) -> dict:
         return {
@@ -391,13 +416,29 @@ class ChatService:
 
         ocr_text = self.gemini.ocr_pdf_page(unit.pdf_path, unit.page_number)
         ocr_text = normalize_text(ocr_text)
-        if not ocr_text or is_garbled_text(ocr_text, threshold=0.12):
-            return unit
+        if ocr_text and not is_garbled_text(ocr_text, threshold=0.12):
+            return self._unit_from_recovered_text(unit, ocr_text, suffix="ocr")
 
-        lines = [normalize_text(item) for item in ocr_text.splitlines() if normalize_text(item)]
+        decode_source = "\n".join(
+            [
+                " ".join(unit.chopai_lines[:2]),
+                unit.meaning_text[:420],
+            ]
+        ).strip()
+        if not decode_source:
+            return unit
+        repaired = normalize_text(self.gemini.decode_legacy_indic_text(decode_source))
+        if not repaired or is_garbled_text(repaired, threshold=0.05):
+            return unit
+        return self._unit_from_recovered_text(unit, repaired, suffix="decoded")
+
+    def _unit_from_recovered_text(self, unit: RetrievedUnit, text: str, suffix: str) -> RetrievedUnit:
+        lines = [normalize_text(item) for item in text.splitlines() if normalize_text(item)]
+        if not lines:
+            lines = [normalize_text(text)]
+        lines = [line for line in lines if line]
         if not lines:
             return unit
-
         chopai_lines = lines[:2]
         meaning_text = " ".join(lines[2:]) if len(lines) > 2 else " ".join(lines)
         combined = "\n".join(lines[:60])
@@ -411,7 +452,7 @@ class ChatService:
             normalized_text=normalize_text(combined),
             translit_hi_latn=translit,
             translit_gu_latn=translit,
-            chunk_type=f"{unit.chunk_type}_ocr",
+            chunk_type=f"{unit.chunk_type}_{suffix}",
         )
 
     def _persist_exchange(

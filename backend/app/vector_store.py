@@ -12,28 +12,27 @@ class VectorStore:
     def __init__(self, persist_path: Path, collection_name: str = "tartam_chunks"):
         self.available = False
         self.collection = None
+        self.client = None
+        self.collection_name = collection_name
 
         if chromadb is None:
             return
 
-        client = chromadb.PersistentClient(path=str(persist_path))
-        self.collection = client.get_or_create_collection(collection_name)
+        self.client = chromadb.PersistentClient(path=str(persist_path))
+        self.collection = self.client.get_or_create_collection(collection_name)
         self.available = True
 
     def clear(self) -> None:
         if not self.available:
             return
-        ids: list[str] = []
-        offset = 0
-        while True:
-            batch = self.collection.get(include=[], offset=offset, limit=1000)
-            batch_ids = batch.get("ids", [])
-            if not batch_ids:
-                break
-            ids.extend(batch_ids)
-            offset += len(batch_ids)
-        if ids:
-            self.collection.delete(ids=ids)
+        if self.client is None:
+            return
+
+        try:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
+            pass
+        self.collection = self.client.get_or_create_collection(self.collection_name)
 
     def upsert(self, ids: list[str], texts: list[str], embeddings: list[list[float]], metadatas: list[dict]) -> None:
         if not self.available or not ids:

@@ -11,6 +11,7 @@ export interface Citation {
   granth_name: string;
   prakran_name: string;
   chopai_number?: string | null;
+  prakran_chopai_index?: number | null;
   chopai_lines: string[];
   meaning_text: string;
   page_number: number;

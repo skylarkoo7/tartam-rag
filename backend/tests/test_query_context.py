@@ -14,6 +14,7 @@ def _unit(
         granth_name=granth_name,
         prakran_name=prakran_name,
         chopai_number=chopai_number,
+        prakran_chopai_index=int(chopai_number) if chopai_number and chopai_number.isdigit() else None,
         chopai_lines=["a", "b"],
         meaning_text="m",
         language_script="devanagari",
@@ -69,3 +70,14 @@ def test_unit_matches_query_constraints() -> None:
     )
     assert unit_matches_query(_unit(), query)
     assert not unit_matches_query(_unit(chopai_number="5"), query)
+
+
+def test_unit_matches_query_with_prakran_relative_index() -> None:
+    query = parse_query_context(
+        "ShriSingaar prakran 14 chaupai 4",
+        granths=["ShriSingaar"],
+        prior=SessionContextState(),
+    )
+    candidate = _unit(chopai_number="62")
+    candidate.prakran_chopai_index = 4
+    assert unit_matches_query(candidate, query)

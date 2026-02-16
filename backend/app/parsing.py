@@ -10,6 +10,7 @@ from .pdf_extract import PageText
 
 _PRAKRAN_PATTERN = re.compile(r"(प्रकरण|પકરણ|पकरण|prakran|prakaran)", re.IGNORECASE)
 _CHOPAI_MARKER_PATTERN = re.compile(r"(॥\s*\d+|\b\d+\s*$|JJ\s*\d+|\]\s*\d+\s*$)", re.IGNORECASE)
+_PRAKRAN_NUM_PREFIX = re.compile(r"^\s*[-–—]\s*(\d{1,3})\s*[-–—]\s*(.*)$")
 
 
 @dataclass(slots=True)
@@ -17,6 +18,7 @@ class ParsedUnit:
     granth_name: str
     prakran_name: str
     chopai_number: str | None
+    prakran_chopai_index: int | None
     chopai_lines: list[str]
     meaning_text: str
     language_script: str
@@ -43,6 +45,11 @@ def parse_pdf_to_units(pdf_path: Path, pages: list[PageText]) -> list[ParsedUnit
 
     if not units:
         return []
+    counters: dict[tuple[str, str], int] = {}
+    for unit in units:
+        key = (unit.granth_name, unit.prakran_name)
+        counters[key] = counters.get(key, 0) + 1
+        unit.prakran_chopai_index = counters[key]
     return units
 
 
@@ -68,7 +75,9 @@ def _clean_lines(text: str) -> list[str]:
     for line in lines:
         if not line:
             continue
-        if re.fullmatch(r"[-–—]?[0-9]+[-–—]?", line):
+        # Keep -14- style markers because many Tartam PDFs encode prakran this way.
+        # Only drop plain page-number-like lines.
+        if re.fullmatch(r"[0-9]{1,4}", line):
             continue
         if len(line) <= 1:
             continue
@@ -78,6 +87,24 @@ def _clean_lines(text: str) -> list[str]:
 
 def _looks_like_prakran(line: str) -> bool:
     return bool(_PRAKRAN_PATTERN.search(line)) and len(line) <= 120
+
+
+def _extract_prakran_from_prefix(line: str) -> tuple[str | None, str]:
+    match = _PRAKRAN_NUM_PREFIX.match(line)
+    if not match:
+        return None, line
+    number = int(match.group(1))
+    remainder = normalize_text(match.group(2))
+    return f"Prakran {number}", remainder
+
+
+def _extract_prakran_from_keyword(line: str) -> str | None:
+    if not _looks_like_prakran(line):
+        return None
+    number_match = re.search(r"(\d{1,3})", line)
+    if number_match:
+        return f"Prakran {int(number_match.group(1))}"
+    return line
 
 
 def _extract_chopai_number(line: str) -> str | None:
@@ -124,6 +151,7 @@ def _build_unit(
         granth_name=granth,
         prakran_name=prakran,
         chopai_number=_extract_chopai_number(chopai_lines[-1] if chopai_lines else ""),
+        prakran_chopai_index=None,
         chopai_lines=chopai_lines,
         meaning_text=meaning_text,
         language_script=script_name,
@@ -177,9 +205,20 @@ def _parse_page(
         pending_meaning = []
 
     for line in lines:
-        if _looks_like_prakran(line):
+        prakran_from_prefix, remainder = _extract_prakran_from_prefix(line)
+        if prakran_from_prefix:
             flush_current()
-            current_prakran = line
+            current_prakran = prakran_from_prefix
+            if remainder:
+                line = remainder
+            else:
+                prev_line = line
+                continue
+
+        prakran_from_keyword = _extract_prakran_from_keyword(line)
+        if prakran_from_keyword:
+            flush_current()
+            current_prakran = prakran_from_keyword
             prev_line = line
             continue
 

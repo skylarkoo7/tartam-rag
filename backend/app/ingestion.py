@@ -140,6 +140,7 @@ class IngestionService:
                     "granth_name": unit.granth_name,
                     "prakran_name": unit.prakran_name,
                     "chopai_number": unit.chopai_number,
+                    "prakran_chopai_index": unit.prakran_chopai_index,
                     "chopai_lines_json": json.dumps(unit.chopai_lines, ensure_ascii=False),
                     "meaning_text": unit.meaning_text,
                     "language_script": unit.language_script,

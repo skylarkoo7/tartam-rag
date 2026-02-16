@@ -7,9 +7,11 @@ import { safeDisplayText } from "../lib/text";
 
 interface CitationCardProps {
   citation: Citation;
+  onSelect?: (citation: Citation) => void;
+  active?: boolean;
 }
 
-export function CitationCard({ citation }: CitationCardProps) {
+export function CitationCard({ citation, onSelect, active = false }: CitationCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const chopaiPreview = useMemo(() => {
@@ -33,19 +35,31 @@ export function CitationCard({ citation }: CitationCardProps) {
   );
 
   return (
-    <article className="rounded-xl border border-[#d9b48b] bg-[#fff6e9] p-3">
-      <button className="w-full text-left" onClick={() => setExpanded((prev) => !prev)} type="button">
+    <article className={`rounded-xl border p-3 transition ${active ? "border-[#cc7d33] bg-[#fff5e8]" : "border-[#e7d5c3] bg-[#fffdf9]"}`}>
+      <button
+        className="w-full cursor-pointer text-left"
+        onClick={() => {
+          setExpanded((prev) => !prev);
+          onSelect?.(citation);
+        }}
+        type="button"
+      >
         <div className="flex items-center justify-between gap-3">
-          <h4 className="text-sm font-semibold text-[#6d4326]">
+          <h4 className="text-sm font-semibold text-[#5a3a22]">
             {citation.granth_name} <span className="text-[#9a6d48]">·</span> {citation.prakran_name}
           </h4>
           <div className="flex items-center gap-2">
+            {citation.prakran_chopai_index ? (
+              <span className="rounded-full border border-[#e6c8ab] bg-[#fff8ef] px-2 py-0.5 text-xs text-[#805331]">
+                Pk-Ch.{citation.prakran_chopai_index}
+              </span>
+            ) : null}
             {citation.chopai_number ? (
-              <span className="rounded-full border border-[#d9b48b] bg-[#fffaf3] px-2 py-0.5 text-xs text-[#805331]">
+              <span className="rounded-full border border-[#e6c8ab] bg-[#fff8ef] px-2 py-0.5 text-xs text-[#805331]">
                 Ch.{citation.chopai_number}
               </span>
             ) : null}
-            <span className="rounded-full border border-[#d9b48b] bg-[#fffaf3] px-2 py-0.5 text-xs text-[#805331]">
+            <span className="rounded-full border border-[#e6c8ab] bg-[#fff8ef] px-2 py-0.5 text-xs text-[#805331]">
               p.{citation.page_number}
             </span>
           </div>
@@ -55,7 +69,7 @@ export function CitationCard({ citation }: CitationCardProps) {
       </button>
 
       {expanded ? (
-        <div className="mt-3 space-y-2 border-t border-[#e2c4a5] pt-3 text-sm text-[#5f3a21]">
+        <div className="mt-3 space-y-2 border-t border-[#efd7c2] pt-3 text-sm text-[#5f3a21]">
           <p>
             <span className="font-semibold text-[#4a2e1d]">Meaning: </span>
             {meaning}
@@ -75,7 +89,7 @@ export function CitationCard({ citation }: CitationCardProps) {
             </p>
           ) : null}
 
-          <p className="text-xs text-[#8b5f3c]">Source: {citation.pdf_path}</p>
+          <p className="text-xs text-[#8b5f3c]">Click card to open PDF on the right panel.</p>
         </div>
       ) : null}
     </article>

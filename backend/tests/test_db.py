@@ -55,7 +55,7 @@ def test_list_sessions_includes_latest_preview(tmp_path: Path) -> None:
 
     by_id = {item["session_id"]: item for item in sessions}
     assert by_id["sA"]["title_text"] == "first question"
-    assert by_id["sA"]["preview_text"] == "first answer"
+    assert by_id["sA"]["preview_text"] == "first question"
     assert by_id["sA"]["message_count"] == 2
 
 
@@ -79,3 +79,50 @@ def test_session_context_round_trip(tmp_path: Path) -> None:
     assert int(ctx["prakran_range_start"]) == 14
     assert int(ctx["prakran_range_end"]) == 19
     assert int(ctx["chopai_number"]) == 4
+
+
+def test_list_filters_prefers_known_prakrans(tmp_path: Path) -> None:
+    db = Database(tmp_path / "app.db")
+    db.init_db()
+    db.upsert_units(
+        [
+            {
+                "id": "u1",
+                "granth_name": "ShriSingaar",
+                "prakran_name": "Unknown Prakran",
+                "chopai_number": "1",
+                "prakran_chopai_index": 1,
+                "chopai_lines_json": '["x","y"]',
+                "meaning_text": "m",
+                "language_script": "devanagari",
+                "page_number": 1,
+                "pdf_path": "/tmp/a.pdf",
+                "source_set": "hindi-arth",
+                "normalized_text": "x",
+                "translit_hi_latn": "x",
+                "translit_gu_latn": "x",
+                "chunk_text": "x",
+                "chunk_type": "combined",
+            },
+            {
+                "id": "u2",
+                "granth_name": "ShriSingaar",
+                "prakran_name": "Prakran 14",
+                "chopai_number": "2",
+                "prakran_chopai_index": 2,
+                "chopai_lines_json": '["x","y"]',
+                "meaning_text": "m",
+                "language_script": "devanagari",
+                "page_number": 2,
+                "pdf_path": "/tmp/a.pdf",
+                "source_set": "hindi-arth",
+                "normalized_text": "x",
+                "translit_hi_latn": "x",
+                "translit_gu_latn": "x",
+                "chunk_text": "x",
+                "chunk_type": "combined",
+            },
+        ]
+    )
+    _, prakrans = db.list_filters()
+    assert prakrans == ["Prakran 14"]

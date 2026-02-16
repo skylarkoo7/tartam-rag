@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .db import RetrievedUnit
+from .text_quality import is_garbled_text
 
 try:
     from google import genai
@@ -39,6 +40,8 @@ class GeminiClient:
         self.chat_model = chat_model
         self.embedding_model = embedding_model
         self._page_ocr_cache: dict[str, str] = {}
+        self._legacy_decode_cache: dict[str, str] = {}
+        self._embedding_dim: int = 768
         self.client: Any | None = None
 
         if api_key and genai:
@@ -54,23 +57,28 @@ class GeminiClient:
                 self.client = None
 
         self.enabled = self.client is not None
+        if self.enabled:
+            self._bootstrap_embedding_dim()
 
     def embed(self, text: str) -> list[float]:
         text = text.strip()
         if not text:
-            return _hash_embedding("empty")
+            return self._fallback_embedding("empty")
 
         if not self.enabled or self.client is None:
-            return _hash_embedding(text)
+            return self._fallback_embedding(text)
 
         try:
             resp = self.client.models.embed_content(model=self.embedding_model, contents=text)
             values = self._extract_embedding_values(resp)
             if not values:
-                return _hash_embedding(text)
-            return [float(v) for v in values]
+                return self._fallback_embedding(text)
+            vector = [float(v) for v in values]
+            if len(vector) != self._embedding_dim:
+                return self._fallback_embedding(text)
+            return vector
         except Exception:
-            return _hash_embedding(text)
+            return self._fallback_embedding(text)
 
     def embed_many(self, texts: Iterable[str]) -> list[list[float]]:
         items = [text.strip() for text in texts]
@@ -78,7 +86,7 @@ class GeminiClient:
             return []
 
         if not self.enabled or self.client is None:
-            return [_hash_embedding(text or "empty") for text in items]
+            return [_hash_embedding(text or "empty", dim=self._embedding_dim) for text in items]
 
         vectors: list[list[float]] = []
         batch_size = 64
@@ -89,9 +97,13 @@ class GeminiClient:
                 matrix = self._extract_embedding_matrix(response)
                 if len(matrix) != len(batch):
                     raise ValueError("Embedding batch size mismatch")
-                vectors.extend(matrix)
+                for text, vector in zip(batch, matrix):
+                    if len(vector) != self._embedding_dim:
+                        vectors.append(_hash_embedding(text or "empty", dim=self._embedding_dim))
+                    else:
+                        vectors.append(vector)
             except Exception:
-                vectors.extend([_hash_embedding(text or "empty") for text in batch])
+                vectors.extend([_hash_embedding(text or "empty", dim=self._embedding_dim) for text in batch])
 
         return vectors
 
@@ -210,6 +222,40 @@ class GeminiClient:
             converted = self._extract_text(response).strip()
             return converted or value
         except Exception:
+            return value
+
+    def decode_legacy_indic_text(self, text: str) -> str:
+        value = (text or "").strip()
+        if not value:
+            return ""
+        if not self.enabled:
+            return value
+
+        key = hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+        cached = self._legacy_decode_cache.get(key)
+        if cached is not None:
+            return cached
+
+        prompt = (
+            "The following text is scripture extracted from a legacy-font PDF and appears mojibake/garbled. "
+            "Recover it into readable Unicode in the original language (Hindi or Gujarati). "
+            "Preserve line breaks and numbering where possible. "
+            "Output only corrected text, no explanation.\n\n"
+            f"Text:\n{value}"
+        )
+        try:
+            response = self._generate_content(prompt, temperature=0.0)
+            recovered = self._extract_text(response).strip()
+            if not recovered:
+                self._legacy_decode_cache[key] = value
+                return value
+            if is_garbled_text(recovered, threshold=0.02):
+                self._legacy_decode_cache[key] = value
+                return value
+            self._legacy_decode_cache[key] = recovered
+            return recovered
+        except Exception:
+            self._legacy_decode_cache[key] = value
             return value
 
     def summarize_memory(
@@ -523,6 +569,21 @@ class GeminiClient:
             if len(deduped) >= 8:
                 break
         return summary or "Conversation started.", deduped
+
+    def _fallback_embedding(self, text: str) -> list[float]:
+        return _hash_embedding(text or "empty", dim=self._embedding_dim)
+
+    def _bootstrap_embedding_dim(self) -> None:
+        if not self.enabled or self.client is None:
+            return
+        try:
+            response = self.client.models.embed_content(model=self.embedding_model, contents="dimension probe")
+            values = self._extract_embedding_values(response)
+            if values:
+                self._embedding_dim = len(values)
+        except Exception:
+            # Keep deterministic fallback dimension.
+            self._embedding_dim = 768
 
     def _format_bullets(self, items: list[str]) -> str:
         cleaned = [str(item).strip() for item in items if str(item).strip()]

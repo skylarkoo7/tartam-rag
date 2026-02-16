@@ -30,7 +30,7 @@ export function FilterBar(props: FilterBarProps) {
       <label className="text-xs text-[#8b5f3c]">
         Language
         <select
-          className="mt-1 w-full rounded-lg border border-[#c89b6d] bg-[#fff8ee] px-3 py-2 text-sm text-[#5b3923]"
+          className="mt-1 w-full rounded-lg border border-[#dbc2ab] bg-white px-3 py-2 text-sm text-[#5b3923] focus:border-[#cb8854] focus:outline-none"
           value={styleMode}
           onChange={(event) => onStyleMode(event.target.value as StyleMode)}
         >
@@ -45,7 +45,7 @@ export function FilterBar(props: FilterBarProps) {
       <label className="text-xs text-[#8b5f3c]">
         Granth
         <select
-          className="mt-1 w-full rounded-lg border border-[#c89b6d] bg-[#fff8ee] px-3 py-2 text-sm text-[#5b3923]"
+          className="mt-1 w-full rounded-lg border border-[#dbc2ab] bg-white px-3 py-2 text-sm text-[#5b3923] focus:border-[#cb8854] focus:outline-none"
           value={granth}
           onChange={(event) => onGranth(event.target.value)}
         >
@@ -61,7 +61,7 @@ export function FilterBar(props: FilterBarProps) {
       <label className="text-xs text-[#8b5f3c]">
         Prakran
         <select
-          className="mt-1 w-full rounded-lg border border-[#c89b6d] bg-[#fff8ee] px-3 py-2 text-sm text-[#5b3923]"
+          className="mt-1 w-full rounded-lg border border-[#dbc2ab] bg-white px-3 py-2 text-sm text-[#5b3923] focus:border-[#cb8854] focus:outline-none"
           value={prakran}
           onChange={(event) => onPrakran(event.target.value)}
         >

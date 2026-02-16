@@ -211,7 +211,8 @@ def unit_matches_query(unit: RetrievedUnit, query: QueryContext) -> bool:
 
     if query.chopai_number is not None:
         parsed = _extract_first_number(_normalize_digits(unit.chopai_number or ""))
-        if parsed != query.chopai_number:
+        prakran_idx = unit.prakran_chopai_index
+        if parsed != query.chopai_number and prakran_idx != query.chopai_number:
             return False
 
     prakran_numbers = query.prakran_numbers(max_span=20)
@@ -224,6 +225,11 @@ def unit_matches_query(unit: RetrievedUnit, query: QueryContext) -> bool:
 
 def unit_matches_prakran(unit: RetrievedUnit, prakran_number: int) -> bool:
     target = str(prakran_number)
+    prakran_name = (unit.prakran_name or "").strip().lower()
+    explicit_name_match = re.search(r"^prakran\s+(\d{1,3})$", prakran_name)
+    if explicit_name_match:
+        return int(explicit_name_match.group(1)) == prakran_number
+
     candidate_text = " ".join(
         [
             _normalize_digits(unit.prakran_name),

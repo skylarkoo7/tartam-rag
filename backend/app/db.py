@@ -14,6 +14,7 @@ class RetrievedUnit:
     granth_name: str
     prakran_name: str
     chopai_number: str | None
+    prakran_chopai_index: int | None
     chopai_lines: list[str]
     meaning_text: str
     language_script: str
@@ -57,6 +58,7 @@ class Database:
                     granth_name TEXT NOT NULL,
                     prakran_name TEXT NOT NULL,
                     chopai_number TEXT,
+                    prakran_chopai_index INTEGER,
                     chopai_lines_json TEXT NOT NULL,
                     meaning_text TEXT NOT NULL,
                     language_script TEXT NOT NULL,
@@ -127,6 +129,13 @@ class Database:
                 """
             )
 
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(chopai_units)").fetchall()
+            }
+            if "prakran_chopai_index" not in columns:
+                conn.execute("ALTER TABLE chopai_units ADD COLUMN prakran_chopai_index INTEGER")
+
     def clear_ingested_content(self) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM chopai_units")
@@ -140,11 +149,11 @@ class Database:
             conn.executemany(
                 """
                 INSERT INTO chopai_units (
-                    id, granth_name, prakran_name, chopai_number, chopai_lines_json,
+                    id, granth_name, prakran_name, chopai_number, prakran_chopai_index, chopai_lines_json,
                     meaning_text, language_script, page_number, pdf_path, source_set,
                     normalized_text, translit_hi_latn, translit_gu_latn, chunk_text, chunk_type
                 ) VALUES (
-                    :id, :granth_name, :prakran_name, :chopai_number, :chopai_lines_json,
+                    :id, :granth_name, :prakran_name, :chopai_number, :prakran_chopai_index, :chopai_lines_json,
                     :meaning_text, :language_script, :page_number, :pdf_path, :source_set,
                     :normalized_text, :translit_hi_latn, :translit_gu_latn, :chunk_text, :chunk_type
                 )
@@ -152,6 +161,7 @@ class Database:
                     granth_name=excluded.granth_name,
                     prakran_name=excluded.prakran_name,
                     chopai_number=excluded.chopai_number,
+                    prakran_chopai_index=excluded.prakran_chopai_index,
                     chopai_lines_json=excluded.chopai_lines_json,
                     meaning_text=excluded.meaning_text,
                     language_script=excluded.language_script,
@@ -248,9 +258,23 @@ class Database:
             prakrans = [
                 row["prakran_name"]
                 for row in conn.execute(
-                    "SELECT DISTINCT prakran_name FROM chopai_units ORDER BY prakran_name"
+                    """
+                    SELECT DISTINCT prakran_name
+                    FROM chopai_units
+                    WHERE prakran_name IS NOT NULL
+                    AND TRIM(prakran_name) <> ''
+                    AND LOWER(TRIM(prakran_name)) <> 'unknown prakran'
+                    ORDER BY CAST(REPLACE(LOWER(prakran_name), 'prakran ', '') AS INTEGER), prakran_name
+                    """
                 ).fetchall()
             ]
+            if not prakrans:
+                prakrans = [
+                    row["prakran_name"]
+                    for row in conn.execute(
+                        "SELECT DISTINCT prakran_name FROM chopai_units ORDER BY prakran_name"
+                    ).fetchall()
+                ]
         return granths, prakrans
 
     def get_neighbor_context(
@@ -287,6 +311,13 @@ class Database:
             return value[:280].strip()
 
         return _trim(prev_text), _trim(next_text)
+
+    def get_unit_by_id(self, unit_id: str) -> RetrievedUnit | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM chopai_units WHERE id = ? LIMIT 1", (unit_id,)).fetchone()
+        if not row:
+            return None
+        return _row_to_unit(row)
 
     def add_message(
         self,
@@ -363,7 +394,8 @@ class Database:
             args.append(granth_name)
 
         if chopai_number is not None:
-            where.append("CAST(chopai_number AS INTEGER) = ?")
+            where.append("(CAST(chopai_number AS INTEGER) = ? OR prakran_chopai_index = ?)")
+            args.append(chopai_number)
             args.append(chopai_number)
 
         if prakran_number is not None:
@@ -400,8 +432,7 @@ class Database:
         prakran_range: tuple[int, int] | None = None,
     ) -> int:
         where = [
-            "chopai_number IS NOT NULL",
-            "TRIM(chopai_number) <> ''",
+            "(prakran_chopai_index IS NOT NULL OR (chopai_number IS NOT NULL AND TRIM(chopai_number) <> ''))",
         ]
         args: list[Any] = []
 
@@ -424,9 +455,13 @@ class Database:
             if range_clauses:
                 where.append(f"({' OR '.join(range_clauses)})")
 
+        count_expr = "COALESCE(CAST(prakran_chopai_index AS TEXT), TRIM(chopai_number), id)"
+        if prakran_number is not None or prakran_range is not None:
+            count_expr = f"(prakran_name || ':' || {count_expr})"
+
         with self.connect() as conn:
             row = conn.execute(
-                f"SELECT COUNT(DISTINCT chopai_number) AS count FROM chopai_units WHERE {' AND '.join(where)}",
+                f"SELECT COUNT(DISTINCT {count_expr}) AS count FROM chopai_units WHERE {' AND '.join(where)}",
                 args,
             ).fetchone()
         return int(row["count"]) if row else 0
@@ -541,6 +576,13 @@ class Database:
                         SELECT m.text
                         FROM messages m
                         WHERE m.session_id = sessions.session_id
+                        AND m.role = 'user'
+                        ORDER BY datetime(m.created_at) DESC, m.rowid DESC
+                        LIMIT 1
+                    ), (
+                        SELECT m.text
+                        FROM messages m
+                        WHERE m.session_id = sessions.session_id
                         ORDER BY datetime(m.created_at) DESC, m.rowid DESC
                         LIMIT 1
                     ), '') AS preview_text
@@ -581,6 +623,7 @@ def _row_to_unit(row: dict[str, Any]) -> RetrievedUnit:
         granth_name=row["granth_name"],
         prakran_name=row["prakran_name"],
         chopai_number=row.get("chopai_number"),
+        prakran_chopai_index=int(row["prakran_chopai_index"]) if row.get("prakran_chopai_index") is not None else None,
         chopai_lines=json.loads(row["chopai_lines_json"]),
         meaning_text=row["meaning_text"],
         language_script=row["language_script"],
@@ -616,13 +659,15 @@ def _build_fts_query(query: str) -> str:
 def _build_prakran_number_clause(prakran_number: int) -> tuple[str, list[str]]:
     value = str(prakran_number)
     clause = (
-        "(prakran_name LIKE ? "
+        "(LOWER(TRIM(prakran_name)) = ? "
+        "OR prakran_name LIKE ? "
         "OR chunk_text LIKE ? "
         "OR chunk_text LIKE ? "
         "OR normalized_text LIKE ? "
         "OR normalized_text LIKE ?)"
     )
     args = [
+        f"prakran {value}",
         f"%{value}%",
         f"%-{value}-%",
         f"% {value} %",

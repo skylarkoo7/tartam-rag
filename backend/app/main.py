@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .chat import ChatService
 from .config import Settings, get_settings
@@ -133,3 +137,24 @@ def convert(payload: ConvertRequest) -> ConvertResponse:
     else:
         text = convert_text_fallback(payload.text, payload.target_mode)
     return ConvertResponse(text=text, target_mode=payload.target_mode)
+
+
+@app.get(f"{settings.api_prefix}/pdf/{{citation_id}}")
+def citation_pdf(citation_id: str) -> FileResponse:
+    unit = database.get_unit_by_id(citation_id)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Citation not found")
+
+    pdf_path = Path(unit.pdf_path).resolve()
+    workspace_root = settings.workspace_root.resolve()
+    if workspace_root not in pdf_path.parents and pdf_path != workspace_root:
+        raise HTTPException(status_code=403, detail="PDF path is outside workspace")
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="PDF file missing on disk")
+
+    return FileResponse(
+        str(pdf_path),
+        media_type="application/pdf",
+        filename=pdf_path.name,
+        headers={"Content-Disposition": f'inline; filename="{pdf_path.name}"'},
+    )

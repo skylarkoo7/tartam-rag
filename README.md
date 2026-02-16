@@ -4,6 +4,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 - Grounded answers from Tartam PDFs (Hindi + Gujarati corpora)
 - LLM-based explanations (not just retrieval snippets)
 - Inline chopai cards in chat UI (with meaning + source metadata)
+- Right-side source PDF viewer (opens cited PDF on referenced page)
 - Multilingual interaction support: Hindi, Gujarati, English, Hinglish (`kaise ho`), Gujarati-in-English (`kem cho`)
 - Structured query understanding for references like:
   - `singar granth prakran 14 to 19 summary and explanation`
@@ -11,6 +12,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
   - `prakran 19 ma ketli chaupai che`
 - Session context memory for granth/prakran/chopai continuity across follow-up turns
 - One-click answer conversion options (Hindi/Gujarati/English + script variants)
+- Relative chopai indexing inside each prakran (supports queries like `prakran 14 chaupai 4`)
 
 ## Current Status
 
@@ -49,6 +51,7 @@ Implemented in this repository:
 - Inline expandable citation cards below assistant responses
 - Filters: language mode, granth, prakran
 - Session history drawer (server-backed sessions + local current-session id)
+- Interactive citation cards that sync with right-side PDF viewer
 - One-click ingestion trigger button
 
 ## Repository Structure

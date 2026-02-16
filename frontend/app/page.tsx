@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FilterBar } from "../components/FilterBar";
 import { MessageBubble } from "../components/MessageBubble";
-import { fetchFilters, fetchHistory, fetchSessions, sendChat, triggerIngest } from "../lib/api";
+import { API_BASE, fetchFilters, fetchHistory, fetchSessions, sendChat, triggerIngest } from "../lib/api";
 import { ChatMessage, Citation, MessageRecord, SessionRecord, StyleMode } from "../lib/types";
 
 function createSessionId() {
@@ -61,11 +61,22 @@ function shortText(value: string, max = 56): string {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
+function pickLatestCitation(rows: ChatMessage[]): Citation | null {
+  for (let idx = rows.length - 1; idx >= 0; idx -= 1) {
+    const message = rows[idx];
+    if (message.role === "assistant" && message.citations.length > 0) {
+      return message.citations[0];
+    }
+  }
+  return null;
+}
+
 export default function HomePage() {
   const [sessionId, setSessionId] = useState("");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
   const [loading, setLoading] = useState(false);
   const [bootLoading, setBootLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +110,9 @@ export default function HomePage() {
       .then(([filterPayload, history, sessionRows]) => {
         setGranths(filterPayload.granths);
         setPrakrans(filterPayload.prakrans);
-        setMessages(history.map(mapHistoryRow));
+        const mapped = history.map(mapHistoryRow);
+        setMessages(mapped);
+        setActiveCitation(pickLatestCitation(mapped));
         setSessions(withCurrentSession(sessionRows, current));
       })
       .catch((err) => {
@@ -163,6 +176,7 @@ export default function HomePage() {
         createdAt: new Date().toISOString()
       };
       setMessages((prev) => [...prev, assistant]);
+      setActiveCitation(response.citations?.[0] ?? null);
       await reloadSessions(sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
@@ -183,7 +197,9 @@ export default function HomePage() {
     setError(null);
     try {
       const history = await fetchHistory(nextSessionId);
-      setMessages(history.map(mapHistoryRow));
+      const mapped = history.map(mapHistoryRow);
+      setMessages(mapped);
+      setActiveCitation(pickLatestCitation(mapped));
       await reloadSessions(nextSessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load session history");
@@ -196,6 +212,7 @@ export default function HomePage() {
     const next = createSessionId();
     setSessions((prev) => withCurrentSession(prev, next));
     setMessages([]);
+    setActiveCitation(null);
     setSessionId(next);
     window.localStorage.setItem(SESSION_KEY, next);
     setBootLoading(false);
@@ -221,62 +238,67 @@ export default function HomePage() {
     }
   }
 
+  const pdfSrc = useMemo(() => {
+    if (!activeCitation) {
+      return "";
+    }
+    return `${API_BASE}/pdf/${encodeURIComponent(activeCitation.citation_id)}#page=${activeCitation.page_number}`;
+  }, [activeCitation]);
+
   return (
-    <main className="h-screen bg-[#f8f1e2] text-[#4a2e1d]">
-      <div className="mx-auto flex h-full max-w-[1400px]">
-        <aside className="hidden w-72 flex-col border-r border-[#d7b089] bg-[#ead9c0] p-4 md:flex">
-          <h1 className="text-lg font-semibold tracking-tight">Tartam RAG</h1>
-          <p className="mt-1 text-xs text-[#8b5f3c]">Scripture-grounded multilingual assistant</p>
+    <main className="h-screen bg-[#f6f1ea] text-[#2f241c]">
+      <div className="mx-auto flex h-full max-w-[1780px]">
+        <aside className="hidden w-72 flex-col border-r border-[#e5d6c8] bg-[#f3e7d8] p-4 md:flex">
+          <h1 className="text-lg font-semibold tracking-tight">Tartam AI</h1>
+          <p className="mt-1 text-xs text-[#7f5e43]">Grounded scripture chat</p>
 
           <div className="mt-4 flex flex-col gap-2">
             <button
-              className="rounded-lg bg-[#c66a2e] px-3 py-2 text-sm font-medium text-[#fff7ef] hover:bg-[#b75f28]"
+              className="rounded-xl bg-[#b9632a] px-3 py-2 text-sm font-medium text-white hover:bg-[#a95622]"
               onClick={() => void createNewSession()}
               type="button"
             >
               + New chat
             </button>
             <button
-              className="rounded-lg border border-[#c89b6d] bg-[#fff8ee] px-3 py-2 text-sm font-medium text-[#6e4528] hover:bg-[#f7ebdb] disabled:opacity-50"
+              className="rounded-xl border border-[#d7b89a] bg-[#fff9f2] px-3 py-2 text-sm font-medium text-[#6a4529] hover:bg-[#fff2e2] disabled:opacity-50"
               onClick={onIngest}
               disabled={ingesting}
               type="button"
             >
-              {ingesting ? "Indexing..." : "Re-index corpus"}
+              {ingesting ? "Re-indexing..." : "Re-index corpus"}
             </button>
           </div>
 
-          <div className="mt-5 text-xs font-semibold uppercase tracking-wide text-[#8b5f3c]">Recent Sessions</div>
-          <div className="mt-2 flex-1 space-y-1 overflow-y-auto pr-1">
+          <div className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8c6749]">Recent Sessions</div>
+          <div className="mt-2 flex-1 space-y-2 overflow-y-auto pr-1">
             {sessions.map((item) => (
               <button
                 key={item.session_id}
-                className={`w-full rounded-lg px-3 py-2 text-left text-xs transition ${
+                className={`w-full rounded-xl px-3 py-2.5 text-left text-xs transition ${
                   item.session_id === sessionId
-                    ? "bg-[#9f5729] text-[#fff7ef]"
-                    : "bg-[#fff6ea] text-[#6e4528] hover:bg-[#f3e1cb]"
+                    ? "bg-[#a95e2d] text-[#fff6ed]"
+                    : "border border-[#eadac9] bg-[#fffaf5] text-[#6a4529] hover:bg-[#fff0e1]"
                 }`}
                 onClick={() => void openSession(item.session_id)}
                 type="button"
               >
-                <div className="font-medium">{shortText(item.title || "New chat", 42)}</div>
-                <div className="mt-1 truncate text-[11px] opacity-80">
-                  {shortText(item.preview || item.session_id, 52)}
-                </div>
+                <div className="font-semibold leading-5">{shortText(item.title || "New chat", 46)}</div>
+                <div className="mt-1 truncate text-[11px] opacity-85">{shortText(item.preview || "", 60)}</div>
               </button>
             ))}
           </div>
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-[#d9b48b] bg-[#fff7eb]/90 px-4 py-3 backdrop-blur md:px-6">
+          <header className="border-b border-[#e5d7ca] bg-[#fffdf9] px-4 py-3 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold">Multilingual Tartam Chat</h2>
-                <p className="text-xs text-[#8b5f3c]">Hindi · Gujarati · Hinglish · Gujarati Roman</p>
+                <h2 className="text-base font-semibold">Ask by Granth, Prakran, Chopai</h2>
+                <p className="text-xs text-[#806047]">Hindi · Gujarati · Hinglish · Gujarati Roman</p>
               </div>
               <button
-                className="rounded-lg border border-[#c89b6d] bg-[#fff8ee] px-3 py-1.5 text-xs font-medium text-[#6e4528] md:hidden"
+                className="rounded-lg border border-[#d8b99c] bg-[#fff8ef] px-3 py-1.5 text-xs font-medium text-[#6c472a] md:hidden"
                 onClick={() => void createNewSession()}
                 type="button"
               >
@@ -285,7 +307,7 @@ export default function HomePage() {
             </div>
           </header>
 
-          <div className="border-b border-[#d9b48b] bg-[#fff8ee] px-4 py-3 md:px-6">
+          <div className="border-b border-[#eadccf] bg-[#fffaf3] px-4 py-3 md:px-6">
             <div className="mx-auto w-full max-w-4xl">
               <FilterBar
                 styleMode={styleMode}
@@ -300,32 +322,37 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+          <div className="flex-1 overflow-y-auto px-4 py-6 md:px-6">
             <div className="mx-auto w-full max-w-4xl space-y-5">
               {bootLoading ? (
-                <div className="rounded-xl border border-[#d8b68f] bg-[#fff7ed] p-4 text-sm text-[#7e583a]">Loading chat...</div>
+                <div className="rounded-2xl border border-[#ead5c0] bg-white p-4 text-sm text-[#7b5a43]">Loading chat...</div>
               ) : null}
 
               {error ? (
-                <div className="rounded-xl border border-[#cc7a3a] bg-[#fff0de] p-3 text-sm text-[#8a3f1d]">{error}</div>
+                <div className="rounded-2xl border border-[#e6a875] bg-[#fff2e5] p-3 text-sm text-[#8e3f18]">{error}</div>
               ) : null}
 
               {!bootLoading && messages.length === 0 ? (
-                <div className="rounded-xl border border-[#d8b68f] bg-[#fff7ed] p-5 text-sm text-[#7e583a]">
-                  Ask anything from the corpus. Example: <em>mohajal kya hai</em> or <em>kem cho</em>.
+                <div className="rounded-2xl border border-[#ead5c0] bg-white p-5 text-sm text-[#6f5039]">
+                  Ask anything from corpus. Example: <em>singar granth prakran 14 to 19 summary</em>.
                 </div>
               ) : null}
 
               {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  activeCitationId={activeCitation?.citation_id ?? null}
+                  onCitationSelect={(citation) => setActiveCitation(citation)}
+                />
               ))}
               <div ref={scrollRef} />
             </div>
           </div>
 
-          <div className="border-t border-[#d9b48b] bg-[#fff7eb] px-4 py-4 md:px-6">
+          <div className="border-t border-[#eadccf] bg-[#fffdf9] px-4 py-4 md:px-6">
             <div className="mx-auto w-full max-w-4xl">
-              <div className="rounded-2xl border border-[#cfa577] bg-[#fff8ee] p-2">
+              <div className="rounded-2xl border border-[#e6d4c4] bg-white p-2 shadow-[0_6px_24px_rgba(72,42,19,0.05)]">
                 <textarea
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
@@ -336,13 +363,13 @@ export default function HomePage() {
                     }
                   }}
                   rows={3}
-                  placeholder="Message Tartam RAG..."
-                  className="w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] text-[#4a2e1d] outline-none placeholder:text-[#aa7a56]"
+                  placeholder="Ask with granth/prakran/chopai references..."
+                  className="w-full resize-none border-0 bg-transparent px-2 py-1 text-[15px] text-[#3f2f22] outline-none placeholder:text-[#a18066]"
                 />
-                <div className="flex items-center justify-between border-t border-[#e0c3a2] pt-2">
-                  <p className="px-2 text-xs text-[#8b5f3c]">Shift + Enter for newline</p>
+                <div className="flex items-center justify-between border-t border-[#f1e3d7] pt-2">
+                  <p className="px-2 text-xs text-[#8a674b]">Shift + Enter for newline</p>
                   <button
-                    className="rounded-lg bg-[#c66a2e] px-4 py-2 text-sm font-medium text-[#fff7ef] hover:bg-[#b75f28] disabled:opacity-50"
+                    className="rounded-lg bg-[#bc682d] px-4 py-2 text-sm font-medium text-white hover:bg-[#a95a24] disabled:opacity-50"
                     disabled={!canSend}
                     onClick={() => void onSend()}
                     type="button"
@@ -354,6 +381,35 @@ export default function HomePage() {
             </div>
           </div>
         </section>
+
+        <aside className="hidden w-[34%] min-w-[430px] flex-col border-l border-[#e5d6c8] bg-[#f9f5ef] xl:flex">
+          <div className="border-b border-[#e8d9cb] px-4 py-3">
+            <h3 className="text-sm font-semibold text-[#5d3d24]">Source Viewer</h3>
+            <p className="mt-1 text-xs text-[#856248]">Click any citation card to open exact source page.</p>
+          </div>
+
+          {activeCitation ? (
+            <div className="flex h-full flex-col">
+              <div className="space-y-1 border-b border-[#e8d9cb] px-4 py-3 text-xs text-[#6d4a30]">
+                <p className="text-sm font-semibold text-[#533620]">
+                  {activeCitation.granth_name} · {activeCitation.prakran_name}
+                </p>
+                <p>
+                  {activeCitation.chopai_number ? `Chopai ${activeCitation.chopai_number} · ` : ""}
+                  Page {activeCitation.page_number}
+                </p>
+              </div>
+              <iframe
+                key={activeCitation.citation_id}
+                src={pdfSrc}
+                title="Source PDF viewer"
+                className="h-full w-full border-0"
+              />
+            </div>
+          ) : (
+            <div className="p-4 text-sm text-[#7b5a43]">No citation selected yet.</div>
+          )}
+        </aside>
       </div>
     </main>
   );

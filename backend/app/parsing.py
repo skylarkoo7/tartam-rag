@@ -11,6 +11,10 @@ from .pdf_extract import PageText
 _PRAKRAN_PATTERN = re.compile(r"(प्रकरण|પકરણ|पकरण|prakran|prakaran)", re.IGNORECASE)
 _CHOPAI_MARKER_PATTERN = re.compile(r"(॥\s*\d+|\b\d+\s*$|JJ\s*\d+|\]\s*\d+\s*$)", re.IGNORECASE)
 _PRAKRAN_NUM_PREFIX = re.compile(r"^\s*[-–—]\s*(\d{1,3})\s*[-–—]\s*(.*)$")
+_MEANING_MARKER = re.compile(
+    r"^\s*(meaning|arth|artha|अर्थ|भावार्थ|मतलब|અર્થ|અરથ)\s*[:：-]?\s*",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -136,11 +140,8 @@ def _build_unit(
     meaning_lines: list[str],
     chunk_type: str,
 ) -> ParsedUnit:
-    meaning_text = " ".join(line for line in meaning_lines if line)
-    if not meaning_text:
-        meaning_text = " ".join(chopai_lines)
-
-    combined = "\n".join([*chopai_lines, meaning_text]).strip()
+    chopai_clean, meaning_text = _split_chopai_and_meaning(chopai_lines, meaning_lines)
+    combined = "\n".join([*chopai_clean, meaning_text]).strip()
     style = detect_style(combined)
     script_name = _script_name(style)
     normalized = normalize_text(combined)
@@ -150,9 +151,9 @@ def _build_unit(
     return ParsedUnit(
         granth_name=granth,
         prakran_name=prakran,
-        chopai_number=_extract_chopai_number(chopai_lines[-1] if chopai_lines else ""),
+        chopai_number=_extract_chopai_number(chopai_clean[-1] if chopai_clean else ""),
         prakran_chopai_index=None,
-        chopai_lines=chopai_lines,
+        chopai_lines=chopai_clean,
         meaning_text=meaning_text,
         language_script=script_name,
         page_number=page_number,
@@ -164,6 +165,42 @@ def _build_unit(
         chunk_text=combined,
         chunk_type=chunk_type,
     )
+
+
+def _split_chopai_and_meaning(chopai_lines: list[str], meaning_lines: list[str]) -> tuple[list[str], str]:
+    chopai_clean = [normalize_text(item) for item in chopai_lines[:2] if normalize_text(item)]
+    meaning_clean = [normalize_text(item) for item in meaning_lines if normalize_text(item)]
+    all_lines = [line for line in [*chopai_clean, *meaning_clean] if line]
+
+    marker_idx = next((idx for idx, line in enumerate(all_lines) if _MEANING_MARKER.match(line)), None)
+    if marker_idx is not None:
+        marker_line = all_lines[marker_idx]
+        marker_content = _MEANING_MARKER.sub("", marker_line).strip()
+        before = [line for line in all_lines[:marker_idx] if line]
+        after = [line for line in all_lines[marker_idx + 1 :] if line]
+
+        if not chopai_clean:
+            chopai_clean = before[:2] if before else all_lines[:2]
+        meaning_parts = [item for item in [marker_content, *after] if item]
+        meaning_text = " ".join(meaning_parts).strip()
+        if not meaning_text:
+            meaning_text = " ".join(after).strip()
+        if not meaning_text:
+            meaning_text = " ".join(chopai_clean).strip()
+        if not chopai_clean and all_lines:
+            chopai_clean = all_lines[:2]
+        return chopai_clean[:2] or ["Chopai unavailable"], meaning_text or "Meaning unavailable"
+
+    if not chopai_clean and all_lines:
+        chopai_clean = all_lines[:2]
+
+    if not meaning_clean:
+        meaning_clean = all_lines[len(chopai_clean) :]
+    meaning_text = " ".join(meaning_clean).strip()
+    if not meaning_text:
+        meaning_text = " ".join(chopai_clean).strip()
+
+    return chopai_clean[:2] or ["Chopai unavailable"], meaning_text or "Meaning unavailable"
 
 
 def _parse_page(
@@ -223,9 +260,20 @@ def _parse_page(
             continue
 
         if _looks_like_chopai_marker(line):
-            flush_current()
+            carry_line = None
+            if pending_chopai:
+                flush_current()
+            elif pending_meaning:
+                # The line right before chopai marker is usually the first chopai line.
+                carry_line = pending_meaning.pop()
+                # Drop unstructured leading lines instead of emitting a noisy partial unit.
+                pending_meaning = []
+            else:
+                flush_current()
             candidate_lines: list[str] = []
-            if prev_line and prev_line != current_prakran:
+            if carry_line:
+                candidate_lines.append(carry_line)
+            elif prev_line and prev_line != current_prakran:
                 candidate_lines.append(prev_line)
             candidate_lines.append(line)
             pending_chopai = candidate_lines[-2:]

@@ -84,6 +84,14 @@ class SessionRecord(BaseModel):
     message_count: int
 
 
+class ThreadCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+
+
+class ThreadCreateResponse(BaseModel):
+    session_id: str
+
+
 class IngestResponse(BaseModel):
     files_processed: int
     chunks_created: int
@@ -98,5 +106,6 @@ class HealthResponse(BaseModel):
     vector_ready: bool
     indexed_chunks: int
     llm_enabled: bool = False
+    llm_provider: str | None = None
     llm_generation_error: str | None = None
     ocr_error: str | None = None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,6 +84,13 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS chat_threads (
+                    session_id TEXT PRIMARY KEY,
+                    title_text TEXT NOT NULL DEFAULT 'New chat',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS session_memory (
                     session_id TEXT PRIMARY KEY,
                     summary_text TEXT NOT NULL,
@@ -124,6 +132,9 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_session_created
                 ON messages (session_id, created_at);
 
+                CREATE INDEX IF NOT EXISTS idx_chat_threads_updated_at
+                ON chat_threads (updated_at DESC);
+
                 CREATE INDEX IF NOT EXISTS idx_chopai_units_granth_prakran_chopai
                 ON chopai_units (granth_name, prakran_name, chopai_number);
                 """
@@ -135,6 +146,29 @@ class Database:
             }
             if "prakran_chopai_index" not in columns:
                 conn.execute("ALTER TABLE chopai_units ADD COLUMN prakran_chopai_index INTEGER")
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO chat_threads (session_id, title_text, created_at, updated_at)
+                SELECT
+                    m.session_id AS session_id,
+                    COALESCE(
+                        (
+                            SELECT x.text
+                            FROM messages x
+                            WHERE x.session_id = m.session_id
+                            AND x.role = 'user'
+                            ORDER BY datetime(x.created_at) ASC, x.rowid ASC
+                            LIMIT 1
+                        ),
+                        'New chat'
+                    ) AS title_text,
+                    MIN(m.created_at) AS created_at,
+                    MAX(m.created_at) AS updated_at
+                FROM messages m
+                GROUP BY m.session_id
+                """
+            )
 
     def clear_ingested_content(self) -> None:
         with self.connect() as conn:
@@ -328,7 +362,15 @@ class Database:
         style_tag: str,
         citations_json: str | None = None,
     ) -> None:
+        title_candidate = (text or "").strip()[:120] if role == "user" else ""
         with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO chat_threads (session_id, title_text, updated_at)
+                VALUES (?, COALESCE(NULLIF(TRIM(?), ''), 'New chat'), CURRENT_TIMESTAMP)
+                """,
+                (session_id, title_candidate),
+            )
             conn.execute(
                 """
                 INSERT INTO messages (message_id, session_id, role, text, style_tag, citations_json)
@@ -336,6 +378,24 @@ class Database:
                 """,
                 (message_id, session_id, role, text, style_tag, citations_json),
             )
+            if role == "user":
+                conn.execute(
+                    """
+                    UPDATE chat_threads
+                    SET title_text = CASE
+                        WHEN TRIM(title_text) = '' OR LOWER(title_text) = 'new chat' THEN ?
+                        ELSE title_text
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                    WHERE session_id = ?
+                    """,
+                    (title_candidate or "New chat", session_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE chat_threads SET updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+                    (session_id,),
+                )
 
     def get_session_messages(self, session_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -557,46 +617,59 @@ class Database:
             )
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.list_threads(limit=limit)
+
+    def list_threads(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT
-                    sessions.session_id AS session_id,
-                    sessions.last_message_at AS last_message_at,
-                    sessions.message_count AS message_count,
+                    t.session_id AS session_id,
+                    t.title_text AS title_text,
                     COALESCE((
                         SELECT m.text
                         FROM messages m
-                        WHERE m.session_id = sessions.session_id
-                        AND m.role = 'user'
-                        ORDER BY datetime(m.created_at) ASC, m.rowid ASC
-                        LIMIT 1
-                    ), '') AS title_text,
-                    COALESCE((
-                        SELECT m.text
-                        FROM messages m
-                        WHERE m.session_id = sessions.session_id
+                        WHERE m.session_id = t.session_id
                         AND m.role = 'user'
                         ORDER BY datetime(m.created_at) DESC, m.rowid DESC
                         LIMIT 1
                     ), (
                         SELECT m.text
                         FROM messages m
-                        WHERE m.session_id = sessions.session_id
+                        WHERE m.session_id = t.session_id
                         ORDER BY datetime(m.created_at) DESC, m.rowid DESC
                         LIMIT 1
-                    ), '') AS preview_text
-                FROM (
-                    SELECT session_id, MAX(created_at) AS last_message_at, COUNT(*) AS message_count
-                    FROM messages
-                    GROUP BY session_id
-                ) sessions
-                ORDER BY datetime(sessions.last_message_at) DESC
+                    ), '') AS preview_text,
+                    COALESCE((
+                        SELECT MAX(m.created_at)
+                        FROM messages m
+                        WHERE m.session_id = t.session_id
+                    ), t.updated_at) AS last_message_at,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM messages m
+                        WHERE m.session_id = t.session_id
+                    ), 0) AS message_count
+                FROM chat_threads t
+                ORDER BY datetime(last_message_at) DESC
                 LIMIT ?
                 """,
                 (max(1, limit),),
             ).fetchall()
         return rows
+
+    def create_thread(self, title: str | None = None) -> str:
+        session_id = str(uuid.uuid4())
+        title_text = (title or "").strip()[:120] or "New chat"
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_threads (session_id, title_text, created_at, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (session_id, title_text),
+            )
+        return session_id
 
     def record_ingest_run(
         self,

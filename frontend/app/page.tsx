@@ -1,18 +1,29 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 
 import { FilterBar } from "../components/FilterBar";
 import { MessageBubble } from "../components/MessageBubble";
-import { API_BASE, fetchFilters, fetchHealth, fetchHistory, fetchSessions, sendChat, triggerIngest } from "../lib/api";
+import {
+  API_BASE,
+  createThread,
+  fetchFilters,
+  fetchHealth,
+  fetchHistory,
+  fetchThreads,
+  sendChat,
+  triggerIngest
+} from "../lib/api";
 import { ChatMessage, Citation, HealthResponse, MessageRecord, SessionRecord, StyleMode } from "../lib/types";
 import { scriptClassName } from "../lib/text";
 
-function createSessionId() {
-  return `session_${Math.random().toString(36).slice(2)}_${Date.now()}`;
-}
+const PdfSourceViewer = dynamic(
+  () => import("../components/PdfSourceViewer").then((mod) => mod.PdfSourceViewer),
+  { ssr: false }
+);
 
-const SESSION_KEY = "tartam_session_id";
+const THREAD_KEY = "tartam_thread_id";
 
 function mapHistoryRow(row: MessageRecord): ChatMessage {
   let citations: Citation[] = [];
@@ -54,6 +65,16 @@ function withCurrentSession(rows: SessionRecord[], current: string): SessionReco
   return [fallbackSession(current), ...rows];
 }
 
+function pickPreferredThreadId(stored: string | null, rows: SessionRecord[]): string | null {
+  if (stored && rows.some((row) => row.session_id === stored)) {
+    return stored;
+  }
+  if (rows.length > 0) {
+    return rows[0].session_id;
+  }
+  return null;
+}
+
 function shortText(value: string, max = 56): string {
   const clean = value.trim();
   if (!clean) {
@@ -93,7 +114,7 @@ export default function HomePage() {
 
   async function reloadSessions(current: string) {
     try {
-      const rows = await fetchSessions(50);
+      const rows = await fetchThreads(50);
       setSessions(withCurrentSession(rows, current));
     } catch {
       setSessions((prev) => withCurrentSession(prev, current));
@@ -101,30 +122,61 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    let current = window.localStorage.getItem(SESSION_KEY);
-    if (!current) {
-      current = createSessionId();
-      window.localStorage.setItem(SESSION_KEY, current);
-    }
-    setSessionId(current);
+    let cancelled = false;
 
-    Promise.all([fetchFilters(), fetchHistory(current), fetchSessions(50), fetchHealth()])
-      .then(([filterPayload, history, sessionRows, healthPayload]) => {
+    async function boot() {
+      try {
+        const [filterPayload, threadRows, healthPayload] = await Promise.all([
+          fetchFilters(),
+          fetchThreads(50),
+          fetchHealth()
+        ]);
+        if (cancelled) {
+          return;
+        }
         setGranths(filterPayload.granths);
         setPrakrans(filterPayload.prakrans);
+        setHealth(healthPayload);
+
+        const stored = window.localStorage.getItem(THREAD_KEY);
+        let current = pickPreferredThreadId(stored, threadRows);
+        let rows = threadRows;
+
+        if (!current) {
+          const created = await createThread("New chat");
+          current = created.session_id;
+          rows = withCurrentSession(rows, current);
+        }
+        if (cancelled || !current) {
+          return;
+        }
+
+        window.localStorage.setItem(THREAD_KEY, current);
+        setSessionId(current);
+        setSessions(withCurrentSession(rows, current));
+
+        const history = await fetchHistory(current);
+        if (cancelled) {
+          return;
+        }
         const mapped = history.map(mapHistoryRow);
         setMessages(mapped);
         setActiveCitation(pickLatestCitation(mapped));
-        setSessions(withCurrentSession(sessionRows, current));
-        setHealth(healthPayload);
-      })
-      .catch((err) => {
-        setSessions(withCurrentSession([], current));
-        setError(err instanceof Error ? err.message : "Failed to load initial data");
-      })
-      .finally(() => {
-        setBootLoading(false);
-      });
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load initial data");
+        }
+      } finally {
+        if (!cancelled) {
+          setBootLoading(false);
+        }
+      }
+    }
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -185,6 +237,12 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : "Chat request failed");
     } finally {
       setLoading(false);
+      try {
+        const latestHealth = await fetchHealth();
+        setHealth(latestHealth);
+      } catch {
+        // no-op
+      }
     }
   }
 
@@ -193,7 +251,7 @@ export default function HomePage() {
       return;
     }
     setSessionId(nextSessionId);
-    window.localStorage.setItem(SESSION_KEY, nextSessionId);
+    window.localStorage.setItem(THREAD_KEY, nextSessionId);
     setSessions((prev) => withCurrentSession(prev, nextSessionId));
 
     setBootLoading(true);
@@ -212,14 +270,19 @@ export default function HomePage() {
   }
 
   async function createNewSession() {
-    const next = createSessionId();
-    setSessions((prev) => withCurrentSession(prev, next));
-    setMessages([]);
-    setActiveCitation(null);
-    setSessionId(next);
-    window.localStorage.setItem(SESSION_KEY, next);
-    setBootLoading(false);
     setError(null);
+    try {
+      const created = await createThread("New chat");
+      const next = created.session_id;
+      setSessions((prev) => withCurrentSession(prev, next));
+      setMessages([]);
+      setActiveCitation(null);
+      setSessionId(next);
+      window.localStorage.setItem(THREAD_KEY, next);
+      setBootLoading(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create new thread");
+    }
   }
 
   async function onIngest() {
@@ -248,6 +311,13 @@ export default function HomePage() {
     const query = (activeCitation.chopai_lines?.[0] || "").trim();
     const search = query ? `&search=${encodeURIComponent(query.slice(0, 80))}` : "";
     return `${API_BASE}/pdf/${encodeURIComponent(activeCitation.citation_id)}#page=${activeCitation.page_number}&zoom=page-width${search}`;
+  }, [activeCitation]);
+
+  const pdfFileUrl = useMemo(() => {
+    if (!activeCitation) {
+      return "";
+    }
+    return `${API_BASE}/pdf/${encodeURIComponent(activeCitation.citation_id)}`;
   }, [activeCitation]);
 
   const llmReady = Boolean(health?.llm_enabled && !health?.llm_generation_error);
@@ -281,7 +351,7 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8c6749]">Recent Sessions</div>
+          <div className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8c6749]">Recent Threads</div>
           <div className="mt-2 flex-1 space-y-2 overflow-y-auto pr-1">
             {sessions.map((item) => (
               <button
@@ -298,7 +368,7 @@ export default function HomePage() {
                 <div className="mt-1 truncate text-[11px] opacity-85">{shortText(item.preview || "", 60)}</div>
               </button>
             ))}
-            {sessions.length === 0 ? <p className="px-1 text-xs text-[#8f6d51]">No previous sessions yet.</p> : null}
+            {sessions.length === 0 ? <p className="px-1 text-xs text-[#8f6d51]">No previous threads yet.</p> : null}
           </div>
         </aside>
 
@@ -318,7 +388,7 @@ export default function HomePage() {
                   }`}
                   title={health?.llm_generation_error || ""}
                 >
-                  {llmReady ? "LLM live" : "LLM check needed"}
+                  {llmReady ? `${(health?.llm_provider || "llm").toUpperCase()} live` : "LLM check needed"}
                 </span>
                 <span className="hidden rounded-full border border-[#e6d1bd] bg-[#fff6ea] px-2.5 py-1 text-[11px] text-[#7e5b3f] md:inline-block">
                   {health?.indexed_chunks ?? 0} chunks
@@ -440,12 +510,11 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="h-[45%] border-b border-[#eadaca]">
-                <iframe
+              <div className="h-[50%] border-b border-[#eadaca]">
+                <PdfSourceViewer
                   key={activeCitation.citation_id}
-                  src={pdfSrc}
-                  title="Source PDF viewer"
-                  className="h-full w-full border-0"
+                  fileUrl={pdfFileUrl}
+                  initialPage={activeCitation.page_number}
                 />
               </div>
 

@@ -4,7 +4,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 - Grounded answers from Tartam PDFs (Hindi + Gujarati corpora)
 - LLM-based explanations (not just retrieval snippets)
 - Inline chopai cards in chat UI (with meaning + source metadata)
-- Right-side source PDF viewer (opens cited PDF on referenced page)
+- Right-side `react-pdf` source viewer (page navigation + zoom for cited PDF page)
 - PDF page API for citations (`GET /api/pdf/{citation_id}`)
 - Multilingual interaction support: Hindi, Gujarati, English, Hinglish (`kaise ho`), Gujarati-in-English (`kem cho`)
 - Structured query understanding for references like:
@@ -19,6 +19,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 
 Implemented in this repository:
 - `backend/` FastAPI API + ingestion + hybrid retrieval + Gemini integration
+- `backend/` FastAPI API + ingestion + hybrid retrieval + Gemini/OpenAI provider routing
 - `frontend/` Next.js chat app with filters, session history, inline citations
 - `tartam/` sample PDF corpus (Hindi-arth + Gujarati-arth)
 
@@ -34,6 +35,8 @@ Implemented in this repository:
   - Chroma vector search (if installed)
   - Reciprocal Rank Fusion (RRF)
 - Chat generation
+  - Provider router: `LLM_PROVIDER=auto|gemini|openai`
+  - Gemini primary + OpenAI fallback (when configured)
   - Uses retrieved citations as strict grounding context
   - Applies deterministic reference constraints (granth/prakran/chopai) before generation
   - LLM response format:
@@ -41,7 +44,8 @@ Implemented in this repository:
     - `Explanation from Chopai`
     - `Grounding`
 - Persistence
-  - Chat history in SQLite by `session_id`
+  - Thread-wise chat history in SQLite by `session_id` (thread id)
+  - Dedicated `chat_threads` table (title, updated_at, message_count)
   - Session memory in SQLite (`summary_text` + `key_facts`) to preserve long-context continuity
   - Session reference context in SQLite (`granth_name`, `prakran_number`, `chopai_number`, range)
   - Server-side session list API for persistent history drawer
@@ -52,6 +56,7 @@ Implemented in this repository:
 - Inline expandable citation cards below assistant responses
 - Filters: language mode, granth, prakran
 - Session history drawer (server-backed sessions + local current-session id)
+- Thread creation/listing via API (`POST /api/threads`, `GET /api/threads`)
 - Interactive citation cards that sync with right-side PDF viewer
 - LLM runtime health badge (shows if Gemini is available or quota/network blocked)
 - One-click ingestion trigger button
@@ -84,6 +89,7 @@ Implemented in this repository:
 - Node.js 20.9+ (Next.js 16 requirement)
 - npm
 - Gemini API key (for full LLM reasoning and embeddings)
+- Optional OpenAI API key (for LLM fallback/routing)
 
 Optional for OCR fallback:
 - Tesseract OCR
@@ -107,6 +113,9 @@ Update `/Users/skylark/Documents/github/tartam-rag/backend/.env`:
 GEMINI_API_KEY=your_key_here
 GEMINI_CHAT_MODEL=gemini-3-flash-preview
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+OPENAI_API_KEY=
+OPENAI_CHAT_MODEL=gpt-4o-mini
+LLM_PROVIDER=auto
 ```
 
 Run API:
@@ -152,6 +161,8 @@ python -m scripts.run_ingest
 - `GET /api/filters`
 - `GET /api/history/{session_id}`
 - `GET /api/sessions`
+- `GET /api/threads`
+- `POST /api/threads`
 - `POST /api/chat`
 - `POST /api/convert`
 - `GET /api/pdf/{citation_id}`
@@ -215,10 +226,10 @@ make test
 
 - Gujarati PDFs may require AES decryption support from `pycryptodome`.
 - OCR fallback is enabled by default and can be tuned via `.env`.
-- Without Gemini key, chat answering is disabled (agentic mode requires Gemini for reasoning).
+- Without Gemini/OpenAI keys, chat reasoning is disabled (retrieval-only context still available).
 - `text-embedding-004` is deprecated by Google; this project now uses `gemini-embedding-001`.
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
-- Gemini free-tier can hit `429 RESOURCE_EXHAUSTED`; UI/API now surfaces this explicitly via health/debug fields.
+- Gemini keys can fail due quota/auth (e.g. `RESOURCE_EXHAUSTED`, leaked key `PERMISSION_DENIED`); UI/API surfaces this explicitly via `/api/health` and chat debug payload.
 
 Recommended OCR settings (already enabled in sample env):
 - `ENABLE_OCR_FALLBACK=true`

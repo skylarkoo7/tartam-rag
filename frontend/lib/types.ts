@@ -79,12 +79,17 @@ export interface SessionRecord {
   message_count: number;
 }
 
+export interface ThreadCreateResponse {
+  session_id: string;
+}
+
 export interface HealthResponse {
   status: string;
   db_ready: boolean;
   vector_ready: boolean;
   indexed_chunks: number;
   llm_enabled: boolean;
+  llm_provider?: string | null;
   llm_generation_error?: string | null;
   ocr_error?: string | null;
 }

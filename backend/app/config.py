@@ -29,6 +29,9 @@ class Settings:
     gemini_ocr_models: list[str] = field(
         default_factory=lambda: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-flash-preview"]
     )
+    openai_api_key: str | None = None
+    openai_chat_model: str = "gpt-4o-mini"
+    llm_provider: str = "auto"
 
     retrieval_top_k: int = 6
     minimum_grounding_score: float = 0.015
@@ -115,6 +118,9 @@ def get_settings() -> Settings:
     settings.gemini_chat_model = os.getenv("GEMINI_CHAT_MODEL", settings.gemini_chat_model)
     settings.gemini_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", settings.gemini_embedding_model)
     settings.gemini_ocr_models = _split_csv(os.getenv("GEMINI_OCR_MODELS"), settings.gemini_ocr_models)
+    settings.openai_api_key = os.getenv("OPENAI_API_KEY", settings.openai_api_key)
+    settings.openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", settings.openai_chat_model)
+    settings.llm_provider = os.getenv("LLM_PROVIDER", settings.llm_provider).strip().lower()
 
     settings.corpus_dirs = _split_csv(os.getenv("CORPUS_DIRS"), settings.corpus_dirs)
 

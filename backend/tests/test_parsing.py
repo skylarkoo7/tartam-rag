@@ -45,3 +45,29 @@ def test_parse_prakran_from_inline_dash_prefix() -> None:
     units = parse_pdf_to_units(Path("/tmp/13ShriSingaar.pdf"), pages)
     assert units
     assert units[0].prakran_name == "Prakran 19"
+
+
+def test_split_meaning_marker_into_meaning_field() -> None:
+    pages = [
+        PageText(
+            page_number=1,
+            extraction_method="pdf",
+            quality_score=0.8,
+            text="\n".join(
+                [
+                    "-14-",
+                    "chaupai line one",
+                    "chaupai line two JJ 4",
+                    "Meaning: this is the explanation block",
+                    "second meaning sentence",
+                ]
+            ),
+        )
+    ]
+
+    units = parse_pdf_to_units(Path("/tmp/13ShriSingaar.pdf"), pages)
+    assert units
+    first = units[0]
+    assert "chaupai line one" in first.chopai_lines[0].lower()
+    assert "explanation block" in first.meaning_text.lower()
+    assert "meaning:" not in first.meaning_text.lower()

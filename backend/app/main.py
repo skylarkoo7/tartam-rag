@@ -13,6 +13,7 @@ from .db import Database
 from .gemini_client import GeminiClient
 from .ingestion import IngestionService
 from .language import convert_text_fallback
+from .llm_router import LLMRouter
 from .models import (
     ChatRequest,
     ChatResponse,
@@ -22,14 +23,17 @@ from .models import (
     HealthResponse,
     IngestResponse,
     MessageRecord,
+    ThreadCreateRequest,
+    ThreadCreateResponse,
     SessionRecord,
 )
+from .openai_client import OpenAIClient
 from .rate_limit import InMemoryRateLimiter
 from .retrieval import RetrievalService
 from .vector_store import VectorStore
 
 
-def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiClient, IngestionService, ChatService]:
+def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiClient, LLMRouter, IngestionService, ChatService]:
     db = Database(settings.db_path)
     db.init_db()
 
@@ -40,15 +44,20 @@ def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiCli
         embedding_model=settings.gemini_embedding_model,
         ocr_models=settings.gemini_ocr_models,
     )
+    openai = OpenAIClient(
+        api_key=settings.openai_api_key,
+        chat_model=settings.openai_chat_model,
+    )
+    llm = LLMRouter(provider=settings.llm_provider, gemini=gemini, openai=openai)
 
     ingest = IngestionService(settings=settings, db=db, vectors=vectors, gemini=gemini)
     retrieval = RetrievalService(db=db, vectors=vectors, gemini=gemini)
-    chat = ChatService(settings=settings, db=db, retrieval=retrieval, gemini=gemini)
-    return db, vectors, gemini, ingest, chat
+    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=llm)
+    return db, vectors, gemini, llm, ingest, chat
 
 
 settings = get_settings()
-database, vectors, gemini_client, ingestion_service, chat_service = build_services(settings)
+database, vectors, gemini_client, llm_client, ingestion_service, chat_service = build_services(settings)
 rate_limiter = InMemoryRateLimiter(max_per_minute=settings.request_rate_limit_per_min)
 
 app = FastAPI(title=settings.app_name)
@@ -74,9 +83,10 @@ def health() -> HealthResponse:
         db_ready=True,
         vector_ready=vectors.available,
         indexed_chunks=database.count_units(),
-        llm_enabled=gemini_client.enabled,
-        llm_generation_error=_compact_error(gemini_client.last_generation_error),
-        ocr_error=_compact_error(gemini_client.last_ocr_error),
+        llm_enabled=llm_client.enabled,
+        llm_provider=llm_client.provider,
+        llm_generation_error=_compact_error(llm_client.last_generation_error),
+        ocr_error=_compact_error(llm_client.last_ocr_error),
     )
 
 
@@ -106,7 +116,7 @@ def history(session_id: str) -> list[MessageRecord]:
 
 @app.get(f"{settings.api_prefix}/sessions", response_model=list[SessionRecord])
 def sessions(limit: int = 50) -> list[SessionRecord]:
-    rows = database.list_sessions(limit=limit)
+    rows = database.list_threads(limit=limit)
     return [
         SessionRecord(
             session_id=row["session_id"],
@@ -117,6 +127,27 @@ def sessions(limit: int = 50) -> list[SessionRecord]:
         )
         for row in rows
     ]
+
+
+@app.get(f"{settings.api_prefix}/threads", response_model=list[SessionRecord])
+def threads(limit: int = 50) -> list[SessionRecord]:
+    rows = database.list_threads(limit=limit)
+    return [
+        SessionRecord(
+            session_id=row["session_id"],
+            title=(row.get("title_text") or "New chat")[:120],
+            preview=(row.get("preview_text") or "")[:240],
+            last_message_at=row["last_message_at"],
+            message_count=int(row.get("message_count", 0)),
+        )
+        for row in rows
+    ]
+
+
+@app.post(f"{settings.api_prefix}/threads", response_model=ThreadCreateResponse)
+def create_thread(payload: ThreadCreateRequest | None = None) -> ThreadCreateResponse:
+    session_id = database.create_thread(title=(payload.title if payload else None))
+    return ThreadCreateResponse(session_id=session_id)
 
 
 @app.post(
@@ -134,8 +165,8 @@ def chat(payload: ChatRequest) -> ChatResponse:
     dependencies=[Depends(rate_limiter.dependency())],
 )
 def convert(payload: ConvertRequest) -> ConvertResponse:
-    if gemini_client.enabled:
-        text = gemini_client.convert_text(payload.text, payload.target_mode)
+    if llm_client.enabled:
+        text = llm_client.convert_text(payload.text, payload.target_mode)
         if text.strip() == payload.text.strip():
             text = convert_text_fallback(payload.text, payload.target_mode)
     else:

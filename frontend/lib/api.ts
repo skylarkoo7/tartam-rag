@@ -6,7 +6,8 @@ import {
   FiltersResponse,
   HealthResponse,
   MessageRecord,
-  SessionRecord
+  SessionRecord,
+  ThreadCreateResponse
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api";
@@ -32,6 +33,20 @@ export async function fetchHistory(sessionId: string): Promise<MessageRecord[]> 
 export async function fetchSessions(limit = 50): Promise<SessionRecord[]> {
   const resp = await fetch(`${API_BASE}/sessions?limit=${limit}`, { cache: "no-store" });
   return handleJson<SessionRecord[]>(resp);
+}
+
+export async function fetchThreads(limit = 50): Promise<SessionRecord[]> {
+  const resp = await fetch(`${API_BASE}/threads?limit=${limit}`, { cache: "no-store" });
+  return handleJson<SessionRecord[]>(resp);
+}
+
+export async function createThread(title?: string): Promise<ThreadCreateResponse> {
+  const resp = await fetch(`${API_BASE}/threads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: title || null })
+  });
+  return handleJson<ThreadCreateResponse>(resp);
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {

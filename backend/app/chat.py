@@ -6,8 +6,8 @@ from dataclasses import replace
 
 from .config import Settings
 from .db import Database, RetrievedUnit
-from .gemini_client import GeminiClient
 from .language import detect_style, normalize_text, render_in_style, resolve_output_style, transliterate_to_latin
+from .llm_router import LLMRouter
 from .models import Citation, ChatRequest, ChatResponse
 from .query_context import (
     QueryContext,
@@ -16,6 +16,7 @@ from .query_context import (
     parse_query_context,
     parse_session_context,
     unit_matches_query,
+    unit_matches_prakran,
 )
 from .retrieval import RetrievalService
 from .text_quality import is_garbled_text, safe_display_text
@@ -27,12 +28,12 @@ class ChatService:
         settings: Settings,
         db: Database,
         retrieval: RetrievalService,
-        gemini: GeminiClient,
+        llm: LLMRouter,
     ):
         self.settings = settings
         self.db = db
         self.retrieval = retrieval
-        self.gemini = gemini
+        self.llm = llm
 
     def respond(self, payload: ChatRequest) -> ChatResponse:
         detected = detect_style(payload.message)
@@ -77,12 +78,12 @@ class ChatService:
 
         grounded_facts = self._build_grounded_facts(query_context, count_result)
 
-        if not self.gemini.enabled:
+        if not self.llm.enabled:
             answer = (
-                "LLM is not configured. This app is set to agentic mode and requires GEMINI_API_KEY "
-                "to reason over retrieved chunks."
+                "LLM is not configured. This app is set to agentic mode and requires a valid "
+                "GEMINI_API_KEY or OPENAI_API_KEY to reason over retrieved chunks."
             )
-            follow_up = "Add GEMINI_API_KEY in backend/.env and restart backend."
+            follow_up = "Add GEMINI_API_KEY or OPENAI_API_KEY in backend/.env and restart backend."
             citations = []
             not_found = True
             scores = []
@@ -93,7 +94,7 @@ class ChatService:
                 "query_context": self._context_payload(query_context),
             }
         else:
-            plan = self.gemini.plan_query(
+            plan = self.llm.plan_query(
                 question=payload.message,
                 conversation_context=recent_messages,
                 memory_summary=memory_summary,
@@ -112,7 +113,11 @@ class ChatService:
 
             scores = [score for _, score in constrained]
             strong_results = [pair for pair in constrained if pair[1] >= self.settings.minimum_grounding_score]
-            strong_results = strong_results[: max(top_k, 4)]
+            strong_results = self._diversify_reference_results(
+                strong_results,
+                query_context=query_context,
+                max_items=max(top_k, 4),
+            )
 
             if self._is_ambiguous_reference(query_context, strong_results):
                 strong_results = []
@@ -159,14 +164,14 @@ class ChatService:
                         "I found related pages, but their text still appears unreadable from current extraction. "
                         "Please re-index with OCR recovery enabled or use OCR-processed PDFs for reliable answers."
                     )
-                    ocr_hint = self._compact_error(self.gemini.last_ocr_error)
+                    ocr_hint = self._compact_error(self.llm.last_ocr_error)
                     if ocr_hint:
                         answer = f"{answer}\n\nOCR status: {ocr_hint}"
                     follow_up = "You can also ask with exact granth + prakran + page for targeted OCR recovery."
                     not_found = True
                 else:
                     evidence_units = [unit for unit, _ in explainable_pairs][: max(top_k, 4)]
-                    generated = self.gemini.generate_answer(
+                    generated = self.llm.generate_answer(
                         question=payload.message,
                         citations=evidence_units,
                         target_style=answer_style,
@@ -179,7 +184,7 @@ class ChatService:
                     )
                     if (
                         generated.strip().lower().startswith("i could not find this clearly in available texts")
-                        and self.gemini.last_generation_error
+                        and self.llm.last_generation_error
                     ):
                         answer = render_in_style(
                             "I could not generate a grounded explanation right now because the LLM call failed. "
@@ -229,9 +234,10 @@ class ChatService:
                 "plan": plan,
                 "query_context": self._context_payload(query_context),
                 "grounded_facts": grounded_facts,
-                "llm_enabled": self.gemini.enabled,
-                "llm_generation_error": self.gemini.last_generation_error,
-                "ocr_error": self.gemini.last_ocr_error,
+                "llm_enabled": self.llm.enabled,
+                "llm_generation_error": self.llm.last_generation_error,
+                "ocr_error": self.llm.last_ocr_error,
+                "llm_provider": self.llm.provider,
             }
             if self.settings.allow_debug_payloads
             else None
@@ -368,6 +374,49 @@ class ChatService:
             facts.append("Count result: no distinct chopai numbers found for requested scope.")
         return facts
 
+    def _diversify_reference_results(
+        self,
+        ranked_pairs: list[tuple[RetrievedUnit, float]],
+        *,
+        query_context: QueryContext,
+        max_items: int,
+    ) -> list[tuple[RetrievedUnit, float]]:
+        if not ranked_pairs:
+            return []
+
+        sorted_pairs = sorted(ranked_pairs, key=lambda item: item[1], reverse=True)
+        if query_context.prakran_range_start is None or query_context.prakran_range_end is None:
+            return sorted_pairs[:max_items]
+
+        requested_prakrans = query_context.prakran_numbers(max_span=24)
+        if not requested_prakrans:
+            return sorted_pairs[:max_items]
+
+        per_prakran: dict[int, int] = {number: 0 for number in requested_prakrans}
+        diversified: list[tuple[RetrievedUnit, float]] = []
+        overflow: list[tuple[RetrievedUnit, float]] = []
+
+        for unit, score in sorted_pairs:
+            matched = next((number for number in requested_prakrans if unit_matches_prakran(unit, number)), None)
+            if matched is None:
+                overflow.append((unit, score))
+                continue
+            if per_prakran[matched] < 2:
+                diversified.append((unit, score))
+                per_prakran[matched] += 1
+            else:
+                overflow.append((unit, score))
+
+            if len(diversified) >= max_items:
+                return diversified[:max_items]
+
+        for pair in overflow:
+            diversified.append(pair)
+            if len(diversified) >= max_items:
+                break
+
+        return diversified[:max_items]
+
     def _compact_error(self, value: str | None) -> str | None:
         if not value:
             return None
@@ -445,7 +494,7 @@ class ChatService:
         if not self.settings.allow_gemini_page_ocr_recovery:
             return unit
 
-        ocr_text = self.gemini.ocr_pdf_page(unit.pdf_path, unit.page_number)
+        ocr_text = self.llm.ocr_pdf_page(unit.pdf_path, unit.page_number)
         ocr_text = normalize_text(ocr_text)
         if ocr_text and not is_garbled_text(ocr_text, threshold=0.12):
             return self._unit_from_recovered_text(unit, ocr_text, suffix="ocr")
@@ -458,7 +507,7 @@ class ChatService:
         ).strip()
         if not decode_source:
             return unit
-        repaired = normalize_text(self.gemini.decode_legacy_indic_text(decode_source))
+        repaired = normalize_text(self.llm.decode_legacy_indic_text(decode_source))
         if not repaired or is_garbled_text(repaired, threshold=0.05):
             return unit
         return self._unit_from_recovered_text(unit, repaired, suffix="decoded")
@@ -527,7 +576,7 @@ class ChatService:
             {"role": "user", "text": latest_user_message},
             {"role": "assistant", "text": latest_assistant_message},
         ]
-        summary, key_facts = self.gemini.summarize_memory(
+        summary, key_facts = self.llm.summarize_memory(
             existing_summary=existing_summary,
             existing_key_facts=existing_key_facts,
             latest_user_message=latest_user_message,

@@ -10,5 +10,7 @@ python-multipart==0.0.22
 indic-transliteration==2.3.78
 rapidfuzz==3.14.3
 reportlab==4.4.10
+pytesseract==0.3.13
+pdf2image==1.17.0
 pytest==9.0.2
 httpx==0.28.1

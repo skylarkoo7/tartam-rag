@@ -94,6 +94,33 @@ Implemented in this repository:
 Optional for OCR fallback:
 - Tesseract OCR
 - `pdf2image` runtime dependencies
+- Poppler (`pdftoppm`) for `pdf2image`
+- Hindi/Gujarati tessdata files (`hin`, `guj`)
+
+### Free One-Time OCR Setup (Recommended for Fixed Corpus)
+
+Use local OCR once during ingest, then chat from saved chunks.
+
+```bash
+brew install tesseract poppler
+curl -L -o /opt/homebrew/share/tessdata/hin.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/hin.traineddata
+curl -L -o /opt/homebrew/share/tessdata/guj.traineddata https://github.com/tesseract-ocr/tessdata_best/raw/main/guj.traineddata
+```
+
+Set backend env to disable paid runtime OCR:
+
+```env
+ENABLE_OCR_FALLBACK=true
+ALLOW_OPENAI_PAGE_OCR_RECOVERY=false
+INGEST_OPENAI_OCR_MAX_PAGES=0
+```
+
+Then re-ingest once:
+
+```bash
+cd backend
+python -m scripts.run_ingest
+```
 
 ## Setup
 

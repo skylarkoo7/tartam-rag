@@ -7,9 +7,11 @@ from dataclasses import replace
 
 from .config import Settings
 from .db import Database, RetrievedUnit
+from .fx import FxService
 from .language import detect_style, normalize_text, render_in_style, resolve_output_style, transliterate_to_latin
-from .models import Citation, ChatRequest, ChatResponse
+from .models import Citation, ChatRequest, ChatResponse, CostSummary
 from .openai_client import OpenAIClient
+from .pricing import PricingCatalog, UsageCollector, build_cost_summary
 from .query_context import (
     QueryContext,
     build_query_hints,
@@ -34,13 +36,18 @@ class ChatService:
         db: Database,
         retrieval: RetrievalService,
         llm: OpenAIClient,
+        pricing_catalog: PricingCatalog,
+        fx_service: FxService,
     ):
         self.settings = settings
         self.db = db
         self.retrieval = retrieval
         self.llm = llm
+        self.pricing_catalog = pricing_catalog
+        self.fx_service = fx_service
 
     def respond(self, payload: ChatRequest) -> ChatResponse:
+        usage_collector = UsageCollector()
         detected = detect_style(payload.message)
         answer_style = resolve_output_style(payload.style_mode, detected)
         recent_messages = self.db.get_recent_messages(payload.session_id, limit=8)
@@ -66,6 +73,8 @@ class ChatService:
         retrieval_prakran = prakran_filter if prakran_filter and not query_context.has_prakran_constraint else None
         if retrieval_prakran and retrieval_prakran.lower() == "unknown prakran":
             retrieval_prakran = None
+        if retrieval_prakran and retrieval_prakran.lower() == "prakran not parsed":
+            retrieval_prakran = None
 
         top_k = payload.top_k or self.settings.retrieval_top_k
         evidence_units: list[RetrievedUnit] = []
@@ -82,6 +91,7 @@ class ChatService:
             )
 
         grounded_facts = self._build_grounded_facts(query_context, count_result)
+        cost_summary: CostSummary | None = None
 
         if not self.llm.enabled:
             answer = (
@@ -104,6 +114,7 @@ class ChatService:
                 conversation_context=recent_messages,
                 memory_summary=memory_summary,
                 memory_key_facts=memory_key_facts,
+                usage_collector=usage_collector,
             )
             query_list = self._build_agentic_query_list(payload.message, plan, query_context)
             aggregated = self._agentic_retrieve(
@@ -112,10 +123,17 @@ class ChatService:
                 top_k=top_k,
                 granth=retrieval_granth,
                 prakran=retrieval_prakran,
+                usage_collector=usage_collector,
             )
             merged = self._merge_reference_hits(aggregated, query_context, top_k=top_k)
             constrained = self._apply_query_constraints(merged, query_context)
             constrained = self._prefer_known_prakran_hits(constrained, query_context)
+            if query_context.has_prakran_constraint:
+                constrained = [
+                    (unit, score)
+                    for unit, score in constrained
+                    if (not self._is_unknown_prakran(unit.prakran_name)) or unit.prakran_number is not None
+                ]
 
             scores = [score for _, score in constrained]
             strong_results = [pair for pair in constrained if pair[1] >= self.settings.minimum_grounding_score]
@@ -134,7 +152,9 @@ class ChatService:
                 citations = []
                 not_found = True
             else:
-                recovered_pairs = [(self._recover_unit_if_needed(unit), score) for unit, score in strong_results]
+                recovered_pairs = [
+                    (self._recover_unit_if_needed(unit, usage_collector=usage_collector), score) for unit, score in strong_results
+                ]
                 explainable_pairs = [pair for pair in recovered_pairs if not is_garbled_text(pair[0].chunk_text)]
 
                 citations = []
@@ -188,8 +208,10 @@ class ChatService:
                         memory_key_facts=memory_key_facts,
                         context_constraints=self._context_payload(query_context),
                         grounded_facts=grounded_facts,
+                        usage_collector=usage_collector,
                     )
                     generated = self._normalize_grounding_line(generated, evidence_units, query_context)
+                    generated = self._ensure_structured_answer(generated, evidence_units, query_context)
                     if (
                         generated.strip().lower().startswith("i could not find this clearly in available texts")
                         and self.llm.last_generation_error
@@ -218,14 +240,6 @@ class ChatService:
 
         updated_context = next_session_context(prior_context, query_context)
         self._persist_session_context(payload.session_id, updated_context)
-        self._persist_exchange(
-            session_id=payload.session_id,
-            user_text=payload.message,
-            user_style=detected,
-            assistant_text=answer,
-            assistant_style=answer_style,
-            citations=citations,
-        )
         self._update_session_memory(
             session_id=payload.session_id,
             existing_summary=memory_summary,
@@ -234,6 +248,39 @@ class ChatService:
             latest_assistant_message=answer,
             recent_messages=recent_messages,
             evidence_units=evidence_units,
+            usage_collector=usage_collector,
+        )
+        if self.llm.enabled:
+            fx_quote = self.fx_service.get_usd_inr()
+            cost_summary = build_cost_summary(
+                collector=usage_collector,
+                catalog=self.pricing_catalog,
+                fx_rate=fx_quote.rate,
+                fx_source=fx_quote.source,
+            )
+            for line_item in cost_summary.line_items:
+                self.db.add_usage_event(
+                    session_id=payload.session_id,
+                    stage=line_item.stage,
+                    provider=line_item.provider,
+                    model=line_item.model,
+                    endpoint=line_item.endpoint,
+                    input_tokens=line_item.input_tokens,
+                    cached_input_tokens=line_item.cached_input_tokens,
+                    output_tokens=line_item.output_tokens,
+                    usd_cost=line_item.usd_cost,
+                    inr_cost=line_item.inr_cost,
+                    pricing_version=line_item.pricing_version,
+                    fx_rate=line_item.fx_rate,
+                )
+        self._persist_exchange(
+            session_id=payload.session_id,
+            user_text=payload.message,
+            user_style=detected,
+            assistant_text=answer,
+            assistant_style=answer_style,
+            citations=citations,
+            cost_summary=cost_summary,
         )
 
         debug = (
@@ -246,6 +293,7 @@ class ChatService:
                 "llm_generation_error": self.llm.last_generation_error,
                 "ocr_error": self.llm.last_ocr_error,
                 "llm_provider": "openai",
+                "cost_summary": (cost_summary.model_dump() if cost_summary else None),
             }
             if self.settings.allow_debug_payloads
             else None
@@ -256,6 +304,7 @@ class ChatService:
             not_found=not_found,
             follow_up_question=follow_up,
             citations=citations,
+            cost_summary=cost_summary,
             context_state=self._context_payload_from_state(updated_context),
             debug=debug,
         )
@@ -278,6 +327,7 @@ class ChatService:
         top_k: int,
         granth: str | None,
         prakran: str | None,
+        usage_collector: UsageCollector | None = None,
     ) -> list[tuple[RetrievedUnit, float]]:
         score_by_id: dict[str, float] = {}
         unit_by_id: dict[str, RetrievedUnit] = {}
@@ -290,6 +340,7 @@ class ChatService:
                 top_k=per_query_limit,
                 granth=granth,
                 prakran=prakran,
+                usage_collector=usage_collector,
             )
             query_weight = 1.0 / (1.0 + (query_idx * 0.35))
             for rank, item in enumerate(results, start=1):
@@ -509,11 +560,19 @@ class ChatService:
         return ["Chopai text could not be decoded from this PDF page."]
 
     def _is_unknown_prakran(self, prakran_name: str | None) -> bool:
-        return (prakran_name or "").strip().lower() == "unknown prakran"
+        cleaned = (prakran_name or "").strip().lower()
+        return cleaned in {"unknown prakran", "prakran not parsed", ""}
 
     def _citation_prakran_label(self, unit: RetrievedUnit, query_context: QueryContext) -> str:
         if not self._is_unknown_prakran(unit.prakran_name):
             return unit.prakran_name
+
+        if unit.prakran_number is not None:
+            confidence = float(unit.prakran_confidence or 0.0)
+            if confidence >= 0.7:
+                return f"Prakran {unit.prakran_number}"
+            if confidence >= 0.45:
+                return f"Prakran {unit.prakran_number} (inferred)"
 
         inferred_from_text = self._extract_prakran_number_from_text(
             "\n".join([unit.chunk_text[:1200], unit.meaning_text[:400]])
@@ -553,6 +612,20 @@ class ChatService:
         if not text or not evidence_units:
             return text
 
+        canonical_grounding = self._canonical_grounding_line(evidence_units, query_context)
+        if not canonical_grounding:
+            return text
+
+        cleaned = re.sub(r"Grounding:\s*\[[^\]]+\]\s*", "Grounding: ", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"Grounding:\s*(?:\[\d+\](?:\s*,\s*\[\d+\])*)", "Grounding: ", cleaned, flags=re.IGNORECASE)
+        match = re.search(r"(Grounding:\s*)(.+)", cleaned, flags=re.IGNORECASE)
+        if not match:
+            return f"{cleaned.rstrip()}\nGrounding: {canonical_grounding}"
+
+        replacement = f"Grounding: {canonical_grounding}"
+        return cleaned[: match.start()] + replacement + cleaned[match.end() :]
+
+    def _canonical_grounding_line(self, evidence_units: list[RetrievedUnit], query_context: QueryContext) -> str:
         labels: list[str] = []
         for unit in evidence_units[:6]:
             labels.append(
@@ -569,26 +642,44 @@ class ChatService:
             deduped.append(label)
             if len(deduped) >= 3:
                 break
+        return "; ".join(deduped)
 
-        if not deduped:
-            return text
+    def _ensure_structured_answer(
+        self,
+        text: str,
+        evidence_units: list[RetrievedUnit],
+        query_context: QueryContext,
+    ) -> str:
+        value = (text or "").strip()
+        if not value:
+            return value
 
-        canonical_grounding = "; ".join(deduped)
-        match = re.search(r"(Grounding:\s*)(.+)", text, flags=re.IGNORECASE)
-        if not match:
-            return f"{text.rstrip()}\n3) Grounding: {canonical_grounding}"
+        value = re.sub(r"\b1\)\s*", "", value)
+        value = re.sub(r"\b2\)\s*", "", value)
+        value = re.sub(r"\b3\)\s*", "", value)
+        value = self._normalize_grounding_line(value, evidence_units, query_context)
+        grounding = self._canonical_grounding_line(evidence_units, query_context)
 
-        replacement = f"{match.group(1)}{canonical_grounding}"
-        return text[: match.start()] + replacement + text[match.end() :]
+        if all(marker in value for marker in ["Direct Answer:", "Explanation from Chopai:", "Grounding:"]):
+            return value
 
-    def _recover_unit_if_needed(self, unit: RetrievedUnit) -> RetrievedUnit:
+        paragraphs = [item.strip() for item in re.split(r"\n{2,}", value) if item.strip()]
+        direct = paragraphs[0] if paragraphs else value
+        explanation = paragraphs[1] if len(paragraphs) > 1 else value
+        return (
+            f"Direct Answer: {direct}\n\n"
+            f"Explanation from Chopai: {explanation}\n\n"
+            f"Grounding: {grounding}"
+        )
+
+    def _recover_unit_if_needed(self, unit: RetrievedUnit, *, usage_collector: UsageCollector | None = None) -> RetrievedUnit:
         if not is_garbled_text(unit.chunk_text):
             return unit
 
         if not self.settings.allow_openai_page_ocr_recovery:
             return unit
 
-        ocr_text = self.llm.ocr_pdf_page(unit.pdf_path, unit.page_number)
+        ocr_text = self.llm.ocr_pdf_page(unit.pdf_path, unit.page_number, usage_collector=usage_collector)
         ocr_text = normalize_text(ocr_text)
         if ocr_text and not is_garbled_text(ocr_text, threshold=0.12):
             return self._unit_from_recovered_text(unit, ocr_text, suffix="ocr")
@@ -637,6 +728,7 @@ class ChatService:
         assistant_text: str,
         assistant_style: str,
         citations: list[Citation],
+        cost_summary: CostSummary | None,
     ) -> None:
         self.db.add_message(
             message_id=str(uuid.uuid4()),
@@ -645,6 +737,7 @@ class ChatService:
             text=user_text,
             style_tag=user_style,
             citations_json=None,
+            cost_json=None,
         )
         self.db.add_message(
             message_id=str(uuid.uuid4()),
@@ -653,6 +746,7 @@ class ChatService:
             text=assistant_text,
             style_tag=assistant_style,
             citations_json=json.dumps([citation.model_dump() for citation in citations], ensure_ascii=False),
+            cost_json=(cost_summary.model_dump_json() if cost_summary else None),
         )
 
     def _update_session_memory(
@@ -664,6 +758,7 @@ class ChatService:
         latest_assistant_message: str,
         recent_messages: list[dict[str, str]],
         evidence_units: list[RetrievedUnit],
+        usage_collector: UsageCollector | None = None,
     ) -> None:
         context = [
             *recent_messages[-6:],
@@ -677,5 +772,6 @@ class ChatService:
             latest_assistant_message=latest_assistant_message,
             conversation_context=context,
             citations=evidence_units,
+            usage_collector=usage_collector,
         )
         self.db.upsert_session_memory(session_id=session_id, summary_text=summary, key_facts=key_facts)

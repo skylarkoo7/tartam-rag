@@ -14,6 +14,8 @@ class RetrievedUnit:
     id: str
     granth_name: str
     prakran_name: str
+    prakran_number: int | None
+    prakran_confidence: float | None
     chopai_number: str | None
     prakran_chopai_index: int | None
     chopai_lines: list[str]
@@ -58,6 +60,8 @@ class Database:
                     id TEXT PRIMARY KEY,
                     granth_name TEXT NOT NULL,
                     prakran_name TEXT NOT NULL,
+                    prakran_number INTEGER,
+                    prakran_confidence REAL,
                     chopai_number TEXT,
                     prakran_chopai_index INTEGER,
                     chopai_lines_json TEXT NOT NULL,
@@ -81,12 +85,14 @@ class Database:
                     text TEXT NOT NULL,
                     style_tag TEXT NOT NULL,
                     citations_json TEXT,
+                    cost_json TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS chat_threads (
                     session_id TEXT PRIMARY KEY,
                     title_text TEXT NOT NULL DEFAULT 'New chat',
+                    is_archived INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -118,6 +124,31 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS fx_rates (
+                    rate_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    usd_inr REAL NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS usage_events (
+                    event_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    usd_cost REAL NOT NULL DEFAULT 0,
+                    inr_cost REAL NOT NULL DEFAULT 0,
+                    pricing_version TEXT NOT NULL DEFAULT '',
+                    fx_rate REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS chopai_fts USING fts5(
                     id UNINDEXED,
                     chunk_text,
@@ -137,6 +168,9 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_chopai_units_granth_prakran_chopai
                 ON chopai_units (granth_name, prakran_name, chopai_number);
+
+                CREATE INDEX IF NOT EXISTS idx_usage_events_session_created
+                ON usage_events (session_id, created_at);
                 """
             )
 
@@ -146,6 +180,22 @@ class Database:
             }
             if "prakran_chopai_index" not in columns:
                 conn.execute("ALTER TABLE chopai_units ADD COLUMN prakran_chopai_index INTEGER")
+            if "prakran_number" not in columns:
+                conn.execute("ALTER TABLE chopai_units ADD COLUMN prakran_number INTEGER")
+            if "prakran_confidence" not in columns:
+                conn.execute("ALTER TABLE chopai_units ADD COLUMN prakran_confidence REAL")
+
+            message_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "cost_json" not in message_columns:
+                conn.execute("ALTER TABLE messages ADD COLUMN cost_json TEXT")
+
+            thread_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(chat_threads)").fetchall()
+            }
+            if "is_archived" not in thread_columns:
+                conn.execute("ALTER TABLE chat_threads ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0")
 
             conn.execute(
                 """
@@ -179,21 +229,30 @@ class Database:
         if not units:
             return
 
+        prepared_units: list[dict[str, Any]] = []
+        for unit in units:
+            row = dict(unit)
+            row.setdefault("prakran_number", None)
+            row.setdefault("prakran_confidence", None)
+            prepared_units.append(row)
+
         with self.connect() as conn:
             conn.executemany(
                 """
                 INSERT INTO chopai_units (
-                    id, granth_name, prakran_name, chopai_number, prakran_chopai_index, chopai_lines_json,
+                    id, granth_name, prakran_name, prakran_number, prakran_confidence, chopai_number, prakran_chopai_index, chopai_lines_json,
                     meaning_text, language_script, page_number, pdf_path, source_set,
                     normalized_text, translit_hi_latn, translit_gu_latn, chunk_text, chunk_type
                 ) VALUES (
-                    :id, :granth_name, :prakran_name, :chopai_number, :prakran_chopai_index, :chopai_lines_json,
+                    :id, :granth_name, :prakran_name, :prakran_number, :prakran_confidence, :chopai_number, :prakran_chopai_index, :chopai_lines_json,
                     :meaning_text, :language_script, :page_number, :pdf_path, :source_set,
                     :normalized_text, :translit_hi_latn, :translit_gu_latn, :chunk_text, :chunk_type
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     granth_name=excluded.granth_name,
                     prakran_name=excluded.prakran_name,
+                    prakran_number=excluded.prakran_number,
+                    prakran_confidence=excluded.prakran_confidence,
                     chopai_number=excluded.chopai_number,
                     prakran_chopai_index=excluded.prakran_chopai_index,
                     chopai_lines_json=excluded.chopai_lines_json,
@@ -208,7 +267,7 @@ class Database:
                     chunk_text=excluded.chunk_text,
                     chunk_type=excluded.chunk_type
                 """,
-                units,
+                prepared_units,
             )
 
             # Rebuild FTS index for deterministic runs.
@@ -298,6 +357,7 @@ class Database:
                     WHERE prakran_name IS NOT NULL
                     AND TRIM(prakran_name) <> ''
                     AND LOWER(TRIM(prakran_name)) <> 'unknown prakran'
+                    AND LOWER(TRIM(prakran_name)) <> 'prakran not parsed'
                     ORDER BY CAST(REPLACE(LOWER(prakran_name), 'prakran ', '') AS INTEGER), prakran_name
                     """
                 ).fetchall()
@@ -361,6 +421,7 @@ class Database:
         text: str,
         style_tag: str,
         citations_json: str | None = None,
+        cost_json: str | None = None,
     ) -> None:
         title_candidate = (text or "").strip()[:120] if role == "user" else ""
         with self.connect() as conn:
@@ -373,10 +434,10 @@ class Database:
             )
             conn.execute(
                 """
-                INSERT INTO messages (message_id, session_id, role, text, style_tag, citations_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO messages (message_id, session_id, role, text, style_tag, citations_json, cost_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, session_id, role, text, style_tag, citations_json),
+                (message_id, session_id, role, text, style_tag, citations_json, cost_json),
             )
             if role == "user":
                 conn.execute(
@@ -401,7 +462,7 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT message_id, session_id, role, text, style_tag, citations_json, created_at
+                SELECT message_id, session_id, role, text, style_tag, citations_json, cost_json, created_at
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY datetime(created_at) ASC, rowid ASC
@@ -433,6 +494,7 @@ class Database:
                 WHERE prakran_name IS NOT NULL
                 AND TRIM(prakran_name) <> ''
                 AND LOWER(TRIM(prakran_name)) <> 'unknown prakran'
+                AND LOWER(TRIM(prakran_name)) <> 'prakran not parsed'
                 """
             ).fetchone()
         return bool(int(row["count"])) if row else False
@@ -616,10 +678,11 @@ class Database:
                 ),
             )
 
-    def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
-        return self.list_threads(limit=limit)
+    def list_sessions(self, limit: int = 50, include_archived: bool = False) -> list[dict[str, Any]]:
+        return self.list_threads(limit=limit, include_archived=include_archived)
 
-    def list_threads(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_threads(self, limit: int = 50, include_archived: bool = False) -> list[dict[str, Any]]:
+        where = "" if include_archived else "WHERE COALESCE(t.is_archived, 0) = 0"
         with self.connect() as conn:
             rows = conn.execute(
                 """
@@ -651,6 +714,9 @@ class Database:
                         WHERE m.session_id = t.session_id
                     ), 0) AS message_count
                 FROM chat_threads t
+                """
+                + where
+                + """
                 ORDER BY datetime(last_message_at) DESC
                 LIMIT ?
                 """,
@@ -664,12 +730,172 @@ class Database:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO chat_threads (session_id, title_text, created_at, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO chat_threads (session_id, title_text, is_archived, created_at, updated_at)
+                VALUES (?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (session_id, title_text),
             )
         return session_id
+
+    def archive_threads_by_patterns(self, patterns: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in patterns if item and item.strip()]
+        if not cleaned:
+            return []
+
+        archived_ids: list[str] = []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, title_text
+                FROM chat_threads
+                WHERE COALESCE(is_archived, 0) = 0
+                """
+            ).fetchall()
+            for row in rows:
+                session_id = str(row.get("session_id", ""))
+                title = str(row.get("title_text", ""))
+                target = f"{session_id} {title}".lower()
+                if not any(target.startswith(pattern.lower()) or f" {pattern.lower()}" in target for pattern in cleaned):
+                    continue
+                conn.execute("UPDATE chat_threads SET is_archived = 1 WHERE session_id = ?", (session_id,))
+                archived_ids.append(session_id)
+        return archived_ids
+
+    def record_fx_rate(self, *, source: str, usd_inr: float, fetched_at: str) -> None:
+        if usd_inr <= 0:
+            return
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO fx_rates (rate_id, source, usd_inr, fetched_at, created_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (str(uuid.uuid4()), source.strip()[:80] or "unknown", float(usd_inr), fetched_at.strip()[:64]),
+            )
+
+    def get_latest_fx_rate(self) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT rate_id, source, usd_inr, fetched_at, created_at
+                FROM fx_rates
+                ORDER BY datetime(created_at) DESC, rowid DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return row if row else None
+
+    def add_usage_event(
+        self,
+        *,
+        session_id: str,
+        stage: str,
+        provider: str,
+        model: str,
+        endpoint: str,
+        input_tokens: int,
+        cached_input_tokens: int,
+        output_tokens: int,
+        usd_cost: float,
+        inr_cost: float,
+        pricing_version: str,
+        fx_rate: float,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO usage_events (
+                    event_id, session_id, stage, provider, model, endpoint,
+                    input_tokens, cached_input_tokens, output_tokens,
+                    usd_cost, inr_cost, pricing_version, fx_rate, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    session_id,
+                    stage,
+                    provider,
+                    model,
+                    endpoint,
+                    int(input_tokens),
+                    int(cached_input_tokens),
+                    int(output_tokens),
+                    float(usd_cost),
+                    float(inr_cost),
+                    pricing_version,
+                    float(fx_rate),
+                ),
+            )
+
+    def get_session_costs(self, session_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT cost_json
+                FROM messages
+                WHERE session_id = ?
+                AND role = 'assistant'
+                AND cost_json IS NOT NULL
+                AND TRIM(cost_json) <> ''
+                ORDER BY datetime(created_at) ASC, rowid ASC
+                """,
+                (session_id,),
+            ).fetchall()
+
+        total_usd = 0.0
+        total_inr = 0.0
+        turns = 0
+        fx_rate = 0.0
+        fx_source = "fallback"
+        items: list[dict[str, Any]] = []
+        by_model: dict[str, dict[str, float]] = {}
+
+        for row in rows:
+            raw = row.get("cost_json")
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            turns += 1
+            usd = float(payload.get("total_usd", 0.0) or 0.0)
+            inr = float(payload.get("total_inr", 0.0) or 0.0)
+            total_usd += usd
+            total_inr += inr
+            fx_rate = float(payload.get("fx_rate", fx_rate) or fx_rate)
+            fx_source = str(payload.get("fx_source", fx_source) or fx_source)
+            items.append(payload)
+
+            line_items = payload.get("line_items", [])
+            if not isinstance(line_items, list):
+                continue
+            for line in line_items:
+                if not isinstance(line, dict):
+                    continue
+                model = str(line.get("model", "")).strip() or "unknown"
+                model_row = by_model.setdefault(model, {"usd": 0.0, "inr": 0.0, "calls": 0.0})
+                model_row["usd"] += float(line.get("usd_cost", 0.0) or 0.0)
+                model_row["inr"] += float(line.get("inr_cost", 0.0) or 0.0)
+                model_row["calls"] += 1.0
+
+        rounded_by_model = {
+            model: {"usd": round(values["usd"], 6), "inr": round(values["inr"], 4), "calls": int(values["calls"])}
+            for model, values in by_model.items()
+        }
+        return {
+            "session_id": session_id,
+            "turns": turns,
+            "total_usd": round(total_usd, 6),
+            "total_inr": round(total_inr, 4),
+            "fx_rate": fx_rate,
+            "fx_source": fx_source,
+            "by_model": rounded_by_model,
+            "items": items,
+        }
 
     def record_ingest_run(
         self,
@@ -695,6 +921,8 @@ def _row_to_unit(row: dict[str, Any]) -> RetrievedUnit:
         id=row["id"],
         granth_name=row["granth_name"],
         prakran_name=row["prakran_name"],
+        prakran_number=int(row["prakran_number"]) if row.get("prakran_number") is not None else None,
+        prakran_confidence=float(row["prakran_confidence"]) if row.get("prakran_confidence") is not None else None,
         chopai_number=row.get("chopai_number"),
         prakran_chopai_index=int(row["prakran_chopai_index"]) if row.get("prakran_chopai_index") is not None else None,
         chopai_lines=json.loads(row["chopai_lines_json"]),
@@ -732,7 +960,8 @@ def _build_fts_query(query: str) -> str:
 def _build_prakran_number_clause(prakran_number: int) -> tuple[str, list[str]]:
     value = str(prakran_number)
     clause = (
-        "(LOWER(TRIM(prakran_name)) = ? "
+        "(prakran_number = ? "
+        "OR LOWER(TRIM(prakran_name)) = ? "
         "OR prakran_name LIKE ? "
         "OR chunk_text LIKE ? "
         "OR chunk_text LIKE ? "
@@ -740,6 +969,7 @@ def _build_prakran_number_clause(prakran_number: int) -> tuple[str, list[str]]:
         "OR normalized_text LIKE ?)"
     )
     args = [
+        int(prakran_number),
         f"prakran {value}",
         f"%{value}%",
         f"%-{value}-%",

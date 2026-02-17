@@ -38,12 +38,39 @@ class Citation(BaseModel):
     next_context: str | None = None
 
 
+UsageStage = Literal["plan_query", "query_embedding", "generate_answer", "summarize_memory", "convert_answer", "ocr_recovery"]
+
+
+class UsageLineItem(BaseModel):
+    stage: UsageStage
+    provider: str
+    model: str
+    endpoint: str
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    usd_cost: float = 0.0
+    inr_cost: float = 0.0
+    pricing_version: str
+    fx_rate: float
+
+
+class CostSummary(BaseModel):
+    total_usd: float = 0.0
+    total_inr: float = 0.0
+    currency_local: str = "INR"
+    fx_rate: float = 0.0
+    fx_source: str = "fallback"
+    line_items: list[UsageLineItem] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     answer_style: StyleMode | str
     not_found: bool
     follow_up_question: str | None = None
     citations: list[Citation]
+    cost_summary: CostSummary | None = None
     context_state: dict | None = None
     available_conversions: list[ConvertMode] = Field(
         default_factory=lambda: ["en", "hi", "gu", "hi_latn", "gu_latn", "en_deva", "en_gu"]
@@ -73,6 +100,7 @@ class MessageRecord(BaseModel):
     text: str
     style_tag: str
     citations_json: str | None = None
+    cost_json: str | None = None
     created_at: datetime
 
 
@@ -90,6 +118,17 @@ class ThreadCreateRequest(BaseModel):
 
 class ThreadCreateResponse(BaseModel):
     session_id: str
+
+
+class SessionCostResponse(BaseModel):
+    session_id: str
+    turns: int
+    total_usd: float
+    total_inr: float
+    fx_rate: float
+    fx_source: str
+    by_model: dict[str, dict[str, float]]
+    items: list[CostSummary]
 
 
 class IngestResponse(BaseModel):

@@ -27,6 +27,10 @@ class Settings:
     openai_chat_model: str = "gpt-5.2"
     openai_embedding_model: str = "text-embedding-3-large"
     openai_vision_model: str = "gpt-5.2"
+    pricing_catalog_path: Path = field(default_factory=lambda: Path(__file__).resolve().parent / "pricing_catalog.json")
+    fx_primary_url: str = "https://api.frankfurter.app/latest?from=USD&to=INR"
+    fx_refresh_hours: int = 6
+    usd_inr_fallback_rate: float = 83.0
 
     retrieval_top_k: int = 6
     minimum_grounding_score: float = 0.015
@@ -113,6 +117,16 @@ def get_settings() -> Settings:
     settings.openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", settings.openai_chat_model)
     settings.openai_embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", settings.openai_embedding_model)
     settings.openai_vision_model = os.getenv("OPENAI_VISION_MODEL", settings.openai_vision_model)
+    settings.fx_primary_url = os.getenv("FX_PRIMARY_URL", settings.fx_primary_url)
+    settings.fx_refresh_hours = _to_int(os.getenv("FX_REFRESH_HOURS"), settings.fx_refresh_hours)
+    settings.usd_inr_fallback_rate = _to_float(os.getenv("USD_INR_FALLBACK_RATE"), settings.usd_inr_fallback_rate)
+
+    catalog_override = os.getenv("PRICING_CATALOG_PATH")
+    if catalog_override:
+        custom = Path(catalog_override)
+        if not custom.is_absolute():
+            custom = settings.workspace_root / custom
+        settings.pricing_catalog_path = custom
 
     settings.corpus_dirs = _split_csv(os.getenv("CORPUS_DIRS"), settings.corpus_dirs)
 

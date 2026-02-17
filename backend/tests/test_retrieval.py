@@ -7,6 +7,8 @@ def _unit(idx: int) -> RetrievedUnit:
         id=f"id-{idx}",
         granth_name="Granth",
         prakran_name="Prakran",
+        prakran_number=None,
+        prakran_confidence=None,
         chopai_number=None,
         prakran_chopai_index=None,
         chopai_lines=["line1", "line2"],

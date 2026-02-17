@@ -140,6 +140,8 @@ class IngestionService:
                     "id": item_id,
                     "granth_name": unit.granth_name,
                     "prakran_name": unit.prakran_name,
+                    "prakran_number": unit.prakran_number,
+                    "prakran_confidence": unit.prakran_confidence,
                     "chopai_number": unit.chopai_number,
                     "prakran_chopai_index": unit.prakran_chopai_index,
                     "chopai_lines_json": json.dumps(unit.chopai_lines, ensure_ascii=False),
@@ -179,8 +181,15 @@ class IngestionService:
         if not candidates:
             return pages, 0
 
-        # Prioritize garbled pages first, then lower quality.
-        candidates.sort(key=lambda page: (0 if is_garbled_text(page.text) else 1, page.quality_score))
+        is_gujarati_set = "guj-arth" in str(pdf_path.parent).lower()
+        # Prioritize Gujarati misencoded pages, then garbled, then lower quality.
+        candidates.sort(
+            key=lambda page: (
+                0 if (is_gujarati_set and likely_misencoded_indic_text(page.text)) else 1,
+                0 if is_garbled_text(page.text) else 1,
+                page.quality_score,
+            )
+        )
         recoverable = candidates[:budget]
 
         replacement_text: dict[int, str] = {}
@@ -275,8 +284,37 @@ class IngestionService:
 
                 candidates.sort(key=lambda item: item[0])
                 unit.prakran_name = candidates[0][1]
+                if unit.prakran_number is None:
+                    number = _extract_prakran_number_from_name(unit.prakran_name)
+                    if number is not None:
+                        unit.prakran_number = number
+                if unit.prakran_confidence is None or unit.prakran_confidence < 0.55:
+                    unit.prakran_confidence = 0.55
+
+        for unit in units:
+            if unit.prakran_number is None:
+                number = _extract_prakran_number_from_name(unit.prakran_name)
+                if number is not None:
+                    unit.prakran_number = number
+                    unit.prakran_confidence = max(float(unit.prakran_confidence or 0.0), 0.7)
+            if self._is_unknown_prakran_name(unit.prakran_name):
+                unit.prakran_name = "Prakran not parsed"
+                unit.prakran_confidence = 0.0
 
         return units
 
     def _is_unknown_prakran_name(self, value: str | None) -> bool:
-        return (value or "").strip().lower() == "unknown prakran"
+        cleaned = (value or "").strip().lower()
+        return cleaned in {"unknown prakran", "prakran not parsed", ""}
+
+
+def _extract_prakran_number_from_name(name: str | None) -> int | None:
+    value = (name or "").strip().lower()
+    if not value:
+        return None
+    import re
+
+    match = re.search(r"(\d{1,3})", value)
+    if not match:
+        return None
+    return int(match.group(1))

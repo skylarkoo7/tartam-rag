@@ -6,6 +6,7 @@ import {
   FiltersResponse,
   HealthResponse,
   MessageRecord,
+  SessionCostResponse,
   SessionRecord,
   ThreadCreateResponse
 } from "./types";
@@ -30,13 +31,17 @@ export async function fetchHistory(sessionId: string): Promise<MessageRecord[]> 
   return handleJson<MessageRecord[]>(resp);
 }
 
-export async function fetchSessions(limit = 50): Promise<SessionRecord[]> {
-  const resp = await fetch(`${API_BASE}/sessions?limit=${limit}`, { cache: "no-store" });
+export async function fetchSessions(limit = 50, includeArchived = false): Promise<SessionRecord[]> {
+  const resp = await fetch(`${API_BASE}/sessions?limit=${limit}&include_archived=${includeArchived ? "true" : "false"}`, {
+    cache: "no-store"
+  });
   return handleJson<SessionRecord[]>(resp);
 }
 
-export async function fetchThreads(limit = 50): Promise<SessionRecord[]> {
-  const resp = await fetch(`${API_BASE}/threads?limit=${limit}`, { cache: "no-store" });
+export async function fetchThreads(limit = 50, includeArchived = false): Promise<SessionRecord[]> {
+  const resp = await fetch(`${API_BASE}/threads?limit=${limit}&include_archived=${includeArchived ? "true" : "false"}`, {
+    cache: "no-store"
+  });
   return handleJson<SessionRecord[]>(resp);
 }
 
@@ -52,6 +57,11 @@ export async function createThread(title?: string): Promise<ThreadCreateResponse
 export async function fetchHealth(): Promise<HealthResponse> {
   const resp = await fetch(`${API_BASE}/health`, { cache: "no-store" });
   return handleJson<HealthResponse>(resp);
+}
+
+export async function fetchSessionCosts(sessionId: string): Promise<SessionCostResponse> {
+  const resp = await fetch(`${API_BASE}/costs/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+  return handleJson<SessionCostResponse>(resp);
 }
 
 export async function sendChat(payload: ChatRequest): Promise<ChatResponse> {

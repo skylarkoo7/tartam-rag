@@ -61,28 +61,33 @@ export function scriptClassName(text: string): string {
 }
 
 export function parseAssistantSections(text: string): { title: string; content: string }[] {
-  const input = text?.trim() ?? "";
+  const input = (text ?? "").trim();
   if (!input) {
     return [];
   }
 
+  const normalized = input
+    .replace(/\b1\)\s*/g, "")
+    .replace(/\b2\)\s*/g, "")
+    .replace(/\b3\)\s*/g, "")
+    .replace(/Grounding:\s*\[[^\]]+\]/gi, "Grounding:");
   const markers = ["Direct Answer:", "Explanation from Chopai:", "Grounding:"];
-  const hasStructured = markers.every((marker) => input.includes(marker));
+  const hasStructured = markers.every((marker) => normalized.includes(marker));
   if (!hasStructured) {
-    return [{ title: "Response", content: input }];
+    return [{ title: "Response", content: normalized }];
   }
 
-  const directIndex = input.indexOf("Direct Answer:");
-  const explainIndex = input.indexOf("Explanation from Chopai:");
-  const groundingIndex = input.indexOf("Grounding:");
+  const directIndex = normalized.indexOf("Direct Answer:");
+  const explainIndex = normalized.indexOf("Explanation from Chopai:");
+  const groundingIndex = normalized.indexOf("Grounding:");
 
   if (directIndex === -1 || explainIndex === -1 || groundingIndex === -1) {
-    return [{ title: "Response", content: input }];
+    return [{ title: "Response", content: normalized }];
   }
 
-  const direct = input.slice(directIndex + "Direct Answer:".length, explainIndex).trim();
-  const explanation = input.slice(explainIndex + "Explanation from Chopai:".length, groundingIndex).trim();
-  const grounding = input.slice(groundingIndex + "Grounding:".length).trim();
+  const direct = normalized.slice(directIndex + "Direct Answer:".length, explainIndex).trim();
+  const explanation = normalized.slice(explainIndex + "Explanation from Chopai:".length, groundingIndex).trim();
+  const grounding = normalized.slice(groundingIndex + "Grounding:".length).trim();
 
   return [
     { title: "Direct Answer", content: direct },

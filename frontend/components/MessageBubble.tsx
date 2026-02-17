@@ -28,11 +28,14 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
   const isUser = message.role === "user";
   const sections = !isUser ? parseAssistantSections(message.text) : [];
   const hasGarbled = isGarbledText(message.text);
+  const isNotFoundResponse =
+    !isUser && message.text.trim().toLowerCase().startsWith("i could not find this clearly in available texts");
   const messageFontClass = scriptClassName(message.text);
   const [convertMode, setConvertMode] = useState<ConvertMode>("en");
   const [convertedText, setConvertedText] = useState("");
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState("");
+  const [showCostDetails, setShowCostDetails] = useState(false);
 
   async function onConvert() {
     if (isUser || !message.text.trim()) {
@@ -88,6 +91,70 @@ export function MessageBubble({ message, onCitationSelect, activeCitationId }: M
               {safeDisplayText(message.text, "No readable response text.")}
             </p>
           )}
+
+          {!isUser && message.costSummary ? (
+            <div className="mt-3 space-y-2 rounded-xl border border-[#e8d4c0] bg-[#fff8ef] px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[#734f33]">
+                  Prompt cost: ₹{message.costSummary.total_inr.toFixed(4)} (${message.costSummary.total_usd.toFixed(6)})
+                </p>
+                <button
+                  type="button"
+                  className="rounded-md border border-[#dabc9f] bg-white px-2 py-1 text-[11px] text-[#6a4529]"
+                  onClick={() => setShowCostDetails((prev) => !prev)}
+                >
+                  {showCostDetails ? "Hide details" : "Show details"}
+                </button>
+              </div>
+              <p className="text-[11px] text-[#8a674a]">
+                FX: {message.costSummary.fx_rate.toFixed(2)} ({message.costSummary.fx_source})
+              </p>
+              {showCostDetails ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[540px] border-collapse text-[11px]">
+                    <thead>
+                      <tr className="text-left text-[#7a573b]">
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">Stage</th>
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">Model</th>
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">Input</th>
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">Cached</th>
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">Output</th>
+                        <th className="border-b border-[#e8d4c0] pb-1 pr-2">USD</th>
+                        <th className="border-b border-[#e8d4c0] pb-1">INR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {message.costSummary.line_items.map((item, idx) => (
+                        <tr key={`${item.stage}_${idx}`} className="text-[#5f3a21]">
+                          <td className="py-1 pr-2">{item.stage}</td>
+                          <td className="py-1 pr-2">{item.model}</td>
+                          <td className="py-1 pr-2">{item.input_tokens}</td>
+                          <td className="py-1 pr-2">{item.cached_input_tokens}</td>
+                          <td className="py-1 pr-2">{item.output_tokens}</td>
+                          <td className="py-1 pr-2">{item.usd_cost.toFixed(6)}</td>
+                          <td className="py-1">{item.inr_cost.toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!isUser && isNotFoundResponse ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-[#ddc1a8] bg-[#fff8ef] px-2.5 py-1 text-[11px] text-[#7a563a]">
+                Try adding granth name
+              </span>
+              <span className="rounded-full border border-[#ddc1a8] bg-[#fff8ef] px-2.5 py-1 text-[11px] text-[#7a563a]">
+                Add prakran number
+              </span>
+              <span className="rounded-full border border-[#ddc1a8] bg-[#fff8ef] px-2.5 py-1 text-[11px] text-[#7a563a]">
+                Add a direct chopai phrase
+              </span>
+            </div>
+          ) : null}
 
           {!isUser ? (
             <div className="mt-3 space-y-2 border-t border-[#f1e3d7] pt-3">

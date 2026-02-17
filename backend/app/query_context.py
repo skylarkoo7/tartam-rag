@@ -224,6 +224,9 @@ def unit_matches_query(unit: RetrievedUnit, query: QueryContext) -> bool:
 
 
 def unit_matches_prakran(unit: RetrievedUnit, prakran_number: int) -> bool:
+    if unit.prakran_number is not None:
+        return int(unit.prakran_number) == int(prakran_number)
+
     target = str(prakran_number)
     prakran_name = (unit.prakran_name or "").strip().lower()
     explicit_name_match = re.search(r"^prakran\s+(\d{1,3})$", prakran_name)

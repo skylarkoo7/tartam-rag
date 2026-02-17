@@ -208,6 +208,19 @@ cd backend
 PYTHONPATH=. python -m scripts.eval_benchmark --input benchmarks/sample_queries.jsonl --top-k 3
 ```
 
+## Multilingual Live Report (Markdown + PDF)
+
+```bash
+cd backend
+PYTHONPATH=. python -m scripts.generate_multilingual_report --api-base http://127.0.0.1:8000/api --output-dir reports
+```
+
+Outputs:
+- `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.md`
+- `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.html`
+- `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.pdf`
+- `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.json`
+
 ## Makefile Shortcuts (from repo root)
 
 ```bash

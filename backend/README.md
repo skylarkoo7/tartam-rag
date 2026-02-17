@@ -53,3 +53,9 @@ PYTHONPATH=. pytest -q
 ```bash
 PYTHONPATH=. python -m scripts.eval_benchmark --input benchmarks/sample_queries.jsonl --top-k 3
 ```
+
+## Multilingual Validation Report
+
+```bash
+PYTHONPATH=. python -m scripts.generate_multilingual_report --api-base http://127.0.0.1:8000/api --output-dir reports
+```

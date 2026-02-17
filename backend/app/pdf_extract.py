@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from .text_quality import is_garbled_text, likely_misencoded_indic_text
 

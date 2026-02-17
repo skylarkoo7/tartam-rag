@@ -114,7 +114,7 @@ GEMINI_API_KEY=your_key_here
 GEMINI_CHAT_MODEL=gemini-3-flash-preview
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 OPENAI_API_KEY=
-OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_CHAT_MODEL=gpt-5.1
 LLM_PROVIDER=auto
 ```
 
@@ -245,3 +245,19 @@ Frontend is implemented and included in this repo under `/Users/skylark/Document
 - inline chopai citation cards,
 - session drawer,
 - backend API integration.
+
+## Version Baseline (checked on February 17, 2026)
+
+- Frontend:
+  - `next@16.1.6`
+  - `react@19.2.4`
+  - `react-dom@19.2.4`
+  - `react-pdf@10.3.0`
+- Backend:
+  - `fastapi==0.129.0`
+  - `uvicorn==0.41.0`
+  - `pydantic==2.12.5`
+  - `chromadb==1.5.0`
+  - `pypdf==6.7.0`
+  - `google-genai==1.63.0`
+  - `openai==2.21.0`

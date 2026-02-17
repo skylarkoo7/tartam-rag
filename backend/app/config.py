@@ -30,7 +30,7 @@ class Settings:
         default_factory=lambda: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-flash-preview"]
     )
     openai_api_key: str | None = None
-    openai_chat_model: str = "gpt-4o-mini"
+    openai_chat_model: str = "gpt-5.1"
     llm_provider: str = "auto"
 
     retrieval_top_k: int = 6

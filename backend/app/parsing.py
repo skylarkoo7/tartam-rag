@@ -8,7 +8,7 @@ from .language import detect_style, normalize_text, transliterate_to_latin
 from .pdf_extract import PageText
 
 
-_PRAKRAN_PATTERN = re.compile(r"(प्रकरण|પકરણ|पकरण|prakran|prakaran)", re.IGNORECASE)
+_PRAKRAN_PATTERN = re.compile(r"(प्रकरण|પ્રકરણ|પકરણ|पकरण|prakran|prakaran)", re.IGNORECASE)
 _CHOPAI_MARKER_PATTERN = re.compile(r"(॥\s*\d+|\b\d+\s*$|JJ\s*\d+|\]\s*\d+\s*$)", re.IGNORECASE)
 _PRAKRAN_NUM_PREFIX = re.compile(r"^\s*[-–—]\s*(\d{1,3})\s*[-–—]\s*(.*)$")
 _MEANING_MARKER = re.compile(

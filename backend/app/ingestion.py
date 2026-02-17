@@ -70,6 +70,7 @@ class IngestionService:
 
                 stats.ocr_pages += ocr_count + openai_ocr_count
                 units = parse_pdf_to_units(pdf_path, pages)
+                units = self._fill_unknown_prakrans(units)
                 normalized_units = self._normalize_units(units)
                 all_records.extend(normalized_units)
 
@@ -216,3 +217,66 @@ class IngestionService:
             )
 
         return upgraded_pages, recovered_count
+
+    def _fill_unknown_prakrans(self, units: list[ParsedUnit]) -> list[ParsedUnit]:
+        if not units:
+            return units
+
+        by_pdf: dict[str, list[ParsedUnit]] = {}
+        for unit in units:
+            by_pdf.setdefault(unit.pdf_path, []).append(unit)
+
+        max_page_gap = 6
+        for group in by_pdf.values():
+            if not any(not self._is_unknown_prakran_name(item.prakran_name) for item in group):
+                continue
+
+            prev_name: list[str | None] = [None] * len(group)
+            prev_gap: list[int | None] = [None] * len(group)
+            last_known_name: str | None = None
+            last_known_page: int | None = None
+
+            for idx, unit in enumerate(group):
+                if not self._is_unknown_prakran_name(unit.prakran_name):
+                    last_known_name = unit.prakran_name
+                    last_known_page = unit.page_number
+                    continue
+                if last_known_name is not None and last_known_page is not None:
+                    prev_name[idx] = last_known_name
+                    prev_gap[idx] = abs(unit.page_number - last_known_page)
+
+            next_name: list[str | None] = [None] * len(group)
+            next_gap: list[int | None] = [None] * len(group)
+            future_known_name: str | None = None
+            future_known_page: int | None = None
+
+            for idx in range(len(group) - 1, -1, -1):
+                unit = group[idx]
+                if not self._is_unknown_prakran_name(unit.prakran_name):
+                    future_known_name = unit.prakran_name
+                    future_known_page = unit.page_number
+                    continue
+                if future_known_name is not None and future_known_page is not None:
+                    next_name[idx] = future_known_name
+                    next_gap[idx] = abs(unit.page_number - future_known_page)
+
+            for idx, unit in enumerate(group):
+                if not self._is_unknown_prakran_name(unit.prakran_name):
+                    continue
+
+                candidates: list[tuple[int, str]] = []
+                if prev_name[idx] and prev_gap[idx] is not None and prev_gap[idx] <= max_page_gap:
+                    candidates.append((prev_gap[idx], prev_name[idx]))
+                if next_name[idx] and next_gap[idx] is not None and next_gap[idx] <= max_page_gap:
+                    candidates.append((next_gap[idx], next_name[idx]))
+
+                if not candidates:
+                    continue
+
+                candidates.sort(key=lambda item: item[0])
+                unit.prakran_name = candidates[0][1]
+
+        return units
+
+    def _is_unknown_prakran_name(self, value: str | None) -> bool:
+        return (value or "").strip().lower() == "unknown prakran"

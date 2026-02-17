@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import replace
 
@@ -23,6 +24,10 @@ from .text_quality import is_garbled_text, safe_display_text
 
 
 class ChatService:
+    _DIGIT_TRANS = str.maketrans(
+        "०१२३४५६७८९૦૧૨૩૪૫૬૭૮૯",
+        "01234567890123456789",
+    )
     def __init__(
         self,
         settings: Settings,
@@ -110,6 +115,7 @@ class ChatService:
             )
             merged = self._merge_reference_hits(aggregated, query_context, top_k=top_k)
             constrained = self._apply_query_constraints(merged, query_context)
+            constrained = self._prefer_known_prakran_hits(constrained, query_context)
 
             scores = [score for _, score in constrained]
             strong_results = [pair for pair in constrained if pair[1] >= self.settings.minimum_grounding_score]
@@ -139,11 +145,12 @@ class ChatService:
                         granth_name=unit.granth_name,
                         prakran_name=unit.prakran_name,
                     )
+                    display_prakran_name = self._citation_prakran_label(unit, query_context)
                     citations.append(
                         Citation(
                             citation_id=unit.id,
                             granth_name=unit.granth_name,
-                            prakran_name=unit.prakran_name,
+                            prakran_name=display_prakran_name,
                             chopai_number=unit.chopai_number,
                             prakran_chopai_index=unit.prakran_chopai_index,
                             chopai_lines=self._safe_chopai_lines(unit.chopai_lines),
@@ -182,6 +189,7 @@ class ChatService:
                         context_constraints=self._context_payload(query_context),
                         grounded_facts=grounded_facts,
                     )
+                    generated = self._normalize_grounding_line(generated, evidence_units, query_context)
                     if (
                         generated.strip().lower().startswith("i could not find this clearly in available texts")
                         and self.llm.last_generation_error
@@ -339,6 +347,19 @@ class ChatService:
             return constrained
         return []
 
+    def _prefer_known_prakran_hits(
+        self,
+        ranked: list[tuple[RetrievedUnit, float]],
+        query_context: QueryContext,
+    ) -> list[tuple[RetrievedUnit, float]]:
+        if not ranked:
+            return ranked
+        if not query_context.has_prakran_constraint:
+            return ranked
+
+        known = [(unit, score) for unit, score in ranked if not self._is_unknown_prakran(unit.prakran_name)]
+        return known if known else ranked
+
     def _follow_up_for_not_found(self, query_context: QueryContext) -> str:
         if query_context.granth_name is None and (
             query_context.prakran_number is not None
@@ -486,6 +507,79 @@ class ChatService:
         if cleaned:
             return cleaned
         return ["Chopai text could not be decoded from this PDF page."]
+
+    def _is_unknown_prakran(self, prakran_name: str | None) -> bool:
+        return (prakran_name or "").strip().lower() == "unknown prakran"
+
+    def _citation_prakran_label(self, unit: RetrievedUnit, query_context: QueryContext) -> str:
+        if not self._is_unknown_prakran(unit.prakran_name):
+            return unit.prakran_name
+
+        inferred_from_text = self._extract_prakran_number_from_text(
+            "\n".join([unit.chunk_text[:1200], unit.meaning_text[:400]])
+        )
+        if inferred_from_text is not None:
+            return f"Prakran {inferred_from_text} (inferred)"
+
+        if query_context.prakran_number is not None and unit_matches_prakran(unit, query_context.prakran_number):
+            return f"Prakran {query_context.prakran_number} (inferred)"
+
+        for number in query_context.prakran_numbers(max_span=24):
+            if unit_matches_prakran(unit, number):
+                return f"Prakran {number} (inferred)"
+
+        return "Prakran not parsed"
+
+    def _extract_prakran_number_from_text(self, text: str) -> int | None:
+        value = (text or "").translate(self._DIGIT_TRANS)
+        if not value:
+            return None
+
+        match = re.search(r"(?:प्रकरण|પ્રકરણ|પકરણ|पकरण|prakran|prakaran)\s*[:\-]?\s*(\d{1,3})", value, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+
+        marker = re.search(r"-(\d{1,3})-", value)
+        if marker:
+            return int(marker.group(1))
+        return None
+
+    def _normalize_grounding_line(
+        self,
+        text: str,
+        evidence_units: list[RetrievedUnit],
+        query_context: QueryContext,
+    ) -> str:
+        if not text or not evidence_units:
+            return text
+
+        labels: list[str] = []
+        for unit in evidence_units[:6]:
+            labels.append(
+                f"{unit.granth_name} | {self._citation_prakran_label(unit, query_context)} | p.{unit.page_number}"
+            )
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for label in labels:
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(label)
+            if len(deduped) >= 3:
+                break
+
+        if not deduped:
+            return text
+
+        canonical_grounding = "; ".join(deduped)
+        match = re.search(r"(Grounding:\s*)(.+)", text, flags=re.IGNORECASE)
+        if not match:
+            return f"{text.rstrip()}\n3) Grounding: {canonical_grounding}"
+
+        replacement = f"{match.group(1)}{canonical_grounding}"
+        return text[: match.start()] + replacement + text[match.end() :]
 
     def _recover_unit_if_needed(self, unit: RetrievedUnit) -> RetrievedUnit:
         if not is_garbled_text(unit.chunk_text):

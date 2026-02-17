@@ -8,7 +8,9 @@ from app.chat import ChatService
 from app.config import get_settings
 from app.db import Database
 from app.gemini_client import GeminiClient
+from app.llm_router import LLMRouter
 from app.models import ChatRequest
+from app.openai_client import OpenAIClient
 from app.retrieval import RetrievalService
 from app.vector_store import VectorStore
 
@@ -30,9 +32,15 @@ def run_eval(input_path: Path, top_k: int) -> None:
         api_key=settings.gemini_api_key,
         chat_model=settings.gemini_chat_model,
         embedding_model=settings.gemini_embedding_model,
+        ocr_models=settings.gemini_ocr_models,
     )
+    openai = OpenAIClient(
+        api_key=settings.openai_api_key,
+        chat_model=settings.openai_chat_model,
+    )
+    llm = LLMRouter(provider=settings.llm_provider, gemini=gemini, openai=openai)
     retrieval = RetrievalService(db=db, vectors=vectors, gemini=gemini)
-    chat = ChatService(settings=settings, db=db, retrieval=retrieval, gemini=gemini)
+    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=llm)
 
     rows = [json.loads(line) for line in input_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not rows:

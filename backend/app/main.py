@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from .chat import ChatService
 from .config import Settings, get_settings
 from .db import Database
+from .fx import FxService
 from .ingestion import IngestionService
 from .language import convert_text_fallback
 from .models import (
@@ -21,17 +22,21 @@ from .models import (
     HealthResponse,
     IngestResponse,
     MessageRecord,
+    SessionCostResponse,
     ThreadCreateRequest,
     ThreadCreateResponse,
     SessionRecord,
 )
 from .openai_client import OpenAIClient
+from .pricing import PricingCatalog
 from .rate_limit import InMemoryRateLimiter
 from .retrieval import RetrievalService
 from .vector_store import VectorStore
 
 
-def build_services(settings: Settings) -> tuple[Database, VectorStore, OpenAIClient, IngestionService, ChatService]:
+def build_services(
+    settings: Settings,
+) -> tuple[Database, VectorStore, OpenAIClient, IngestionService, ChatService]:
     db = Database(settings.db_path)
     db.init_db()
 
@@ -45,7 +50,21 @@ def build_services(settings: Settings) -> tuple[Database, VectorStore, OpenAICli
 
     ingest = IngestionService(settings=settings, db=db, vectors=vectors, llm=openai)
     retrieval = RetrievalService(db=db, vectors=vectors, llm=openai)
-    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=openai)
+    pricing_catalog = PricingCatalog.load(settings.pricing_catalog_path)
+    fx_service = FxService(
+        db=db,
+        primary_url=settings.fx_primary_url,
+        refresh_hours=settings.fx_refresh_hours,
+        fallback_rate=settings.usd_inr_fallback_rate,
+    )
+    chat = ChatService(
+        settings=settings,
+        db=db,
+        retrieval=retrieval,
+        llm=openai,
+        pricing_catalog=pricing_catalog,
+        fx_service=fx_service,
+    )
     return db, vectors, openai, ingest, chat
 
 
@@ -108,8 +127,8 @@ def history(session_id: str) -> list[MessageRecord]:
 
 
 @app.get(f"{settings.api_prefix}/sessions", response_model=list[SessionRecord])
-def sessions(limit: int = 50) -> list[SessionRecord]:
-    rows = database.list_threads(limit=limit)
+def sessions(limit: int = 50, include_archived: bool = False) -> list[SessionRecord]:
+    rows = database.list_threads(limit=limit, include_archived=include_archived)
     return [
         SessionRecord(
             session_id=row["session_id"],
@@ -123,8 +142,8 @@ def sessions(limit: int = 50) -> list[SessionRecord]:
 
 
 @app.get(f"{settings.api_prefix}/threads", response_model=list[SessionRecord])
-def threads(limit: int = 50) -> list[SessionRecord]:
-    rows = database.list_threads(limit=limit)
+def threads(limit: int = 50, include_archived: bool = False) -> list[SessionRecord]:
+    rows = database.list_threads(limit=limit, include_archived=include_archived)
     return [
         SessionRecord(
             session_id=row["session_id"],
@@ -185,6 +204,21 @@ def citation_pdf(citation_id: str) -> FileResponse:
         media_type="application/pdf",
         filename=pdf_path.name,
         headers={"Content-Disposition": f'inline; filename="{pdf_path.name}"'},
+    )
+
+
+@app.get(f"{settings.api_prefix}/costs/{{session_id}}", response_model=SessionCostResponse)
+def session_costs(session_id: str) -> SessionCostResponse:
+    payload = database.get_session_costs(session_id)
+    return SessionCostResponse(
+        session_id=payload["session_id"],
+        turns=int(payload["turns"]),
+        total_usd=float(payload["total_usd"]),
+        total_inr=float(payload["total_inr"]),
+        fx_rate=float(payload["fx_rate"]),
+        fx_source=str(payload["fx_source"]),
+        by_model=payload["by_model"],
+        items=payload["items"],
     )
 
 

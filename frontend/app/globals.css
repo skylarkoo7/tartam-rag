@@ -4,6 +4,13 @@
 
 :root {
   color-scheme: light;
+  --bg-0: #fff8ef;
+  --bg-1: #f6ecdf;
+  --ink-0: #3d2a1d;
+  --ink-1: #6a4a31;
+  --accent-1: #cc7a2e;
+  --accent-2: #9f5524;
+  --border-soft: #e8cfb6;
 }
 
 * {
@@ -17,8 +24,9 @@ body {
 }
 
 body {
-  background: linear-gradient(180deg, #f8f4ef 0%, #f4ece3 100%);
-  color: #3a2a1f;
+  background: radial-gradient(1200px 600px at 20% -10%, #ffeed8 0%, transparent 60%),
+    linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+  color: var(--ink-0);
   font-family: "IBM Plex Sans", "Noto Sans Devanagari", "Noto Sans Gujarati", "Segoe UI", sans-serif;
   font-synthesis-weight: none;
   text-rendering: optimizeLegibility;
@@ -35,4 +43,11 @@ body {
 
 .font-gujarati {
   font-family: "Noto Sans Gujarati", "IBM Plex Sans", sans-serif;
+}
+
+.pdf-hit {
+  background: #ffd693;
+  color: #4b2f19;
+  border-radius: 2px;
+  padding: 0 1px;
 }

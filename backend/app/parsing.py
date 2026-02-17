@@ -21,6 +21,8 @@ _MEANING_MARKER = re.compile(
 class ParsedUnit:
     granth_name: str
     prakran_name: str
+    prakran_number: int | None
+    prakran_confidence: float | None
     chopai_number: str | None
     prakran_chopai_index: int | None
     chopai_lines: list[str]
@@ -39,12 +41,22 @@ class ParsedUnit:
 def parse_pdf_to_units(pdf_path: Path, pages: list[PageText]) -> list[ParsedUnit]:
     granth = infer_granth_name(pdf_path)
     source_set = infer_source_set(pdf_path)
-    current_prakran = "Unknown Prakran"
+    current_prakran = "Prakran not parsed"
+    current_prakran_number: int | None = None
+    current_prakran_confidence: float = 0.0
 
     units: list[ParsedUnit] = []
 
     for page in pages:
-        page_units, current_prakran = _parse_page(granth, source_set, pdf_path, page, current_prakran)
+        page_units, current_prakran, current_prakran_number, current_prakran_confidence = _parse_page(
+            granth,
+            source_set,
+            pdf_path,
+            page,
+            current_prakran,
+            current_prakran_number,
+            current_prakran_confidence,
+        )
         units.extend(page_units)
 
     if not units:
@@ -89,26 +101,51 @@ def _clean_lines(text: str) -> list[str]:
     return result
 
 
+def _normalize_digits(text: str) -> str:
+    if not text:
+        return ""
+    dev = "०१२३४५६७८९"
+    guj = "૦૧૨૩૪૫૬૭૮૯"
+    translation = {ord(ch): str(idx) for idx, ch in enumerate(dev)}
+    translation.update({ord(ch): str(idx) for idx, ch in enumerate(guj)})
+    return text.translate(translation)
+
+
+def _extract_prakran_number_any(text: str) -> int | None:
+    normalized = _normalize_digits(text)
+    if not normalized:
+        return None
+    match = re.search(r"(?:प्रकरण|પ્રકરણ|પકરણ|पकरण|prakran|prakaran)\s*[:\-]?\s*(\d{1,3})", normalized, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    marker = re.search(r"-(\d{1,3})-", normalized)
+    if marker:
+        return int(marker.group(1))
+    return None
+
+
 def _looks_like_prakran(line: str) -> bool:
     return bool(_PRAKRAN_PATTERN.search(line)) and len(line) <= 120
 
 
-def _extract_prakran_from_prefix(line: str) -> tuple[str | None, str]:
-    match = _PRAKRAN_NUM_PREFIX.match(line)
+def _extract_prakran_from_prefix(line: str) -> tuple[str | None, int | None, float, str]:
+    match = _PRAKRAN_NUM_PREFIX.match(_normalize_digits(line))
     if not match:
-        return None, line
+        return None, None, 0.0, line
     number = int(match.group(1))
     remainder = normalize_text(match.group(2))
-    return f"Prakran {number}", remainder
+    return f"Prakran {number}", number, 0.95, remainder
 
 
-def _extract_prakran_from_keyword(line: str) -> str | None:
+def _extract_prakran_from_keyword(line: str) -> tuple[str | None, int | None, float]:
     if not _looks_like_prakran(line):
-        return None
-    number_match = re.search(r"(\d{1,3})", line)
+        return None, None, 0.0
+    normalized = _normalize_digits(line)
+    number_match = re.search(r"(\d{1,3})", normalized)
     if number_match:
-        return f"Prakran {int(number_match.group(1))}"
-    return line
+        number = int(number_match.group(1))
+        return f"Prakran {number}", number, 0.86
+    return "Prakran not parsed", None, 0.35
 
 
 def _extract_chopai_number(line: str) -> str | None:
@@ -133,6 +170,8 @@ def _script_name(style: str) -> str:
 def _build_unit(
     granth: str,
     prakran: str,
+    prakran_number: int | None,
+    prakran_confidence: float | None,
     pdf_path: Path,
     source_set: str,
     page_number: int,
@@ -151,6 +190,8 @@ def _build_unit(
     return ParsedUnit(
         granth_name=granth,
         prakran_name=prakran,
+        prakran_number=prakran_number,
+        prakran_confidence=prakran_confidence,
         chopai_number=_extract_chopai_number(chopai_clean[-1] if chopai_clean else ""),
         prakran_chopai_index=None,
         chopai_lines=chopai_clean,
@@ -209,12 +250,16 @@ def _parse_page(
     pdf_path: Path,
     page: PageText,
     incoming_prakran: str,
-) -> tuple[list[ParsedUnit], str]:
+    incoming_prakran_number: int | None,
+    incoming_prakran_confidence: float,
+) -> tuple[list[ParsedUnit], str, int | None, float]:
     lines = _clean_lines(page.text)
     if not lines:
-        return [], incoming_prakran
+        return [], incoming_prakran, incoming_prakran_number, incoming_prakran_confidence
 
     current_prakran = incoming_prakran
+    current_prakran_number = incoming_prakran_number
+    current_prakran_confidence = incoming_prakran_confidence
     units: list[ParsedUnit] = []
 
     pending_chopai: list[str] = []
@@ -230,6 +275,8 @@ def _parse_page(
         unit = _build_unit(
             granth=granth,
             prakran=current_prakran,
+            prakran_number=current_prakran_number,
+            prakran_confidence=current_prakran_confidence,
             pdf_path=pdf_path,
             source_set=source_set,
             page_number=page.page_number,
@@ -242,22 +289,32 @@ def _parse_page(
         pending_meaning = []
 
     for line in lines:
-        prakran_from_prefix, remainder = _extract_prakran_from_prefix(line)
+        prakran_from_prefix, prakran_from_prefix_number, prefix_conf, remainder = _extract_prakran_from_prefix(line)
         if prakran_from_prefix:
             flush_current()
             current_prakran = prakran_from_prefix
+            current_prakran_number = prakran_from_prefix_number
+            current_prakran_confidence = prefix_conf
             if remainder:
                 line = remainder
             else:
                 prev_line = line
                 continue
 
-        prakran_from_keyword = _extract_prakran_from_keyword(line)
+        prakran_from_keyword, prakran_from_keyword_number, keyword_conf = _extract_prakran_from_keyword(line)
         if prakran_from_keyword:
             flush_current()
             current_prakran = prakran_from_keyword
+            current_prakran_number = prakran_from_keyword_number
+            current_prakran_confidence = keyword_conf
             prev_line = line
             continue
+
+        marker_num = _extract_prakran_number_any(line)
+        if marker_num is not None and current_prakran_number is None:
+            current_prakran_number = marker_num
+            current_prakran = f"Prakran {marker_num}"
+            current_prakran_confidence = max(current_prakran_confidence, 0.62)
 
         if _looks_like_chopai_marker(line):
             carry_line = None
@@ -297,6 +354,8 @@ def _parse_page(
                 unit = _build_unit(
                     granth=granth,
                     prakran=current_prakran,
+                    prakran_number=current_prakran_number,
+                    prakran_confidence=current_prakran_confidence,
                     pdf_path=pdf_path,
                     source_set=source_set,
                     page_number=page.page_number,
@@ -310,6 +369,8 @@ def _parse_page(
             unit = _build_unit(
                 granth=granth,
                 prakran=current_prakran,
+                prakran_number=current_prakran_number,
+                prakran_confidence=current_prakran_confidence,
                 pdf_path=pdf_path,
                 source_set=source_set,
                 page_number=page.page_number,
@@ -319,4 +380,4 @@ def _parse_page(
             )
             units.append(unit)
 
-    return units, current_prakran
+    return units, current_prakran, current_prakran_number, current_prakran_confidence

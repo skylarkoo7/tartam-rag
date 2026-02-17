@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .db import RetrievedUnit
+from .pricing import UsageCollector
 from .text_quality import is_garbled_text
 
 try:
@@ -61,7 +62,13 @@ class OpenAIClient:
     def provider(self) -> str:
         return "openai"
 
-    def embed(self, text: str) -> list[float]:
+    def embed(
+        self,
+        text: str,
+        *,
+        usage_collector: UsageCollector | None = None,
+        usage_stage: str = "query_embedding",
+    ) -> list[float]:
         value = text.strip()
         if not value:
             return _hash_embedding("empty", dim=self._embedding_dim)
@@ -78,13 +85,28 @@ class OpenAIClient:
             if not vector:
                 raise ValueError("Empty embedding vector")
             self._embedding_dim = len(vector)
+            usage = self._embedding_usage(response)
+            if usage_collector and usage["input_tokens"] > 0:
+                usage_collector.add(
+                    stage=usage_stage,
+                    provider=self.provider,
+                    model=self.embedding_model,
+                    endpoint="embeddings",
+                    input_tokens=usage["input_tokens"],
+                )
             self.last_embedding_error = None
             return vector
         except Exception as exc:
             self.last_embedding_error = f"{type(exc).__name__}: {exc}"
             return _hash_embedding(value, dim=self._embedding_dim)
 
-    def embed_many(self, texts: Iterable[str]) -> list[list[float]]:
+    def embed_many(
+        self,
+        texts: Iterable[str],
+        *,
+        usage_collector: UsageCollector | None = None,
+        usage_stage: str = "query_embedding",
+    ) -> list[list[float]]:
         values = [text.strip() for text in texts]
         if not values:
             return []
@@ -109,6 +131,15 @@ class OpenAIClient:
                         raise ValueError(f"Empty embedding in batch at index {idx}")
                     self._embedding_dim = len(vector)
                     vectors.append(vector)
+                usage = self._embedding_usage(response)
+                if usage_collector and usage["input_tokens"] > 0:
+                    usage_collector.add(
+                        stage=usage_stage,
+                        provider=self.provider,
+                        model=self.embedding_model,
+                        endpoint="embeddings",
+                        input_tokens=usage["input_tokens"],
+                    )
                 self.last_embedding_error = None
             except Exception as exc:
                 self.last_embedding_error = f"{type(exc).__name__}: {exc}"
@@ -122,6 +153,7 @@ class OpenAIClient:
         conversation_context: list[dict[str, str]] | None = None,
         memory_summary: str = "",
         memory_key_facts: list[str] | None = None,
+        usage_collector: UsageCollector | None = None,
     ) -> dict:
         if not self.enabled:
             return {
@@ -146,7 +178,12 @@ class OpenAIClient:
             f"Question:\n{question}\n"
         )
         try:
-            text = self._complete(prompt, temperature=0.0).strip()
+            text = self._complete(
+                prompt,
+                temperature=0.0,
+                usage_collector=usage_collector,
+                usage_stage="plan_query",
+            ).strip()
             data = self._extract_json_object(text)
             if not data:
                 raise ValueError("No JSON object")
@@ -175,6 +212,7 @@ class OpenAIClient:
         memory_key_facts: list[str] | None = None,
         context_constraints: dict | None = None,
         grounded_facts: list[str] | None = None,
+        usage_collector: UsageCollector | None = None,
     ) -> str:
         if not citations:
             return "I could not find this clearly in available texts."
@@ -193,12 +231,23 @@ class OpenAIClient:
             grounded_facts=grounded_facts or [],
         )
         try:
-            text = self._complete(prompt, temperature=0.2).strip()
+            text = self._complete(
+                prompt,
+                temperature=0.2,
+                usage_collector=usage_collector,
+                usage_stage="generate_answer",
+            ).strip()
             return text or "I could not find this clearly in available texts."
         except Exception:
             return "I could not find this clearly in available texts."
 
-    def convert_text(self, text: str, target_mode: str) -> str:
+    def convert_text(
+        self,
+        text: str,
+        target_mode: str,
+        *,
+        usage_collector: UsageCollector | None = None,
+    ) -> str:
         value = (text or "").strip()
         if not value:
             return ""
@@ -220,7 +269,12 @@ class OpenAIClient:
             f"Text:\n{value}"
         )
         try:
-            converted = self._complete(prompt, temperature=0.1).strip()
+            converted = self._complete(
+                prompt,
+                temperature=0.1,
+                usage_collector=usage_collector,
+                usage_stage="convert_answer",
+            ).strip()
             return converted or value
         except Exception:
             return value
@@ -234,6 +288,7 @@ class OpenAIClient:
         latest_assistant_message: str,
         conversation_context: list[dict[str, str]] | None = None,
         citations: list[RetrievedUnit] | None = None,
+        usage_collector: UsageCollector | None = None,
     ) -> tuple[str, list[str]]:
         fallback = self._fallback_memory(
             existing_summary=existing_summary,
@@ -268,7 +323,12 @@ class OpenAIClient:
             f"Latest citation refs:\n{citation_refs or 'N/A'}\n"
         )
         try:
-            text = self._complete(prompt, temperature=0.0).strip()
+            text = self._complete(
+                prompt,
+                temperature=0.0,
+                usage_collector=usage_collector,
+                usage_stage="summarize_memory",
+            ).strip()
             data = self._extract_json_object(text)
             if not data:
                 return fallback
@@ -313,7 +373,13 @@ class OpenAIClient:
             self._legacy_decode_cache[key] = value
             return value
 
-    def ocr_pdf_page(self, pdf_path: str, page_number: int) -> str:
+    def ocr_pdf_page(
+        self,
+        pdf_path: str,
+        page_number: int,
+        *,
+        usage_collector: UsageCollector | None = None,
+    ) -> str:
         if not self.enabled:
             return ""
 
@@ -343,6 +409,8 @@ class OpenAIClient:
                 model=self.vision_model,
                 input_payload=payload,
                 temperature=0.0,
+                usage_collector=usage_collector,
+                usage_stage="ocr_recovery",
             ).strip()
             self._page_ocr_cache[cache_key] = extracted
             self.last_ocr_error = None
@@ -369,19 +437,40 @@ class OpenAIClient:
             return ""
         return base64.b64encode(image_bytes).decode("ascii")
 
-    def _complete(self, prompt: str, temperature: float | None = None) -> str:
+    def _complete(
+        self,
+        prompt: str,
+        temperature: float | None = None,
+        *,
+        usage_collector: UsageCollector | None = None,
+        usage_stage: str | None = None,
+    ) -> str:
         if not self.enabled or self.client is None:
             raise RuntimeError("OpenAI client unavailable")
 
         try:
-            text = self._responses_text(model=self.chat_model, input_payload=prompt, temperature=temperature)
+            text = self._responses_text(
+                model=self.chat_model,
+                input_payload=prompt,
+                temperature=temperature,
+                usage_collector=usage_collector,
+                usage_stage=usage_stage,
+            )
             self.last_generation_error = None
             return text
         except Exception as exc:
             self.last_generation_error = f"{type(exc).__name__}: {exc}"
             raise
 
-    def _responses_text(self, *, model: str, input_payload: Any, temperature: float | None) -> str:
+    def _responses_text(
+        self,
+        *,
+        model: str,
+        input_payload: Any,
+        temperature: float | None,
+        usage_collector: UsageCollector | None = None,
+        usage_stage: str | None = None,
+    ) -> str:
         if not self.enabled or self.client is None:
             raise RuntimeError("OpenAI client unavailable")
 
@@ -404,6 +493,18 @@ class OpenAIClient:
                 response = self.client.responses.create(**kwargs)
             else:
                 raise
+
+        usage = self._responses_usage(response)
+        if usage_collector and usage_stage and usage["input_tokens"] > 0:
+            usage_collector.add(
+                stage=usage_stage,
+                provider=self.provider,
+                model=model,
+                endpoint="responses",
+                input_tokens=usage["input_tokens"],
+                cached_input_tokens=usage["cached_input_tokens"],
+                output_tokens=usage["output_tokens"],
+            )
 
         text = (getattr(response, "output_text", None) or "").strip()
         if text:
@@ -430,6 +531,46 @@ class OpenAIClient:
         if not merged:
             raise ValueError("No text in OpenAI response")
         return merged
+
+    def _responses_usage(self, response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        if usage is None:
+            return {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+
+        input_tokens = int(getattr(usage, "input_tokens", 0) if not isinstance(usage, dict) else usage.get("input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) if not isinstance(usage, dict) else usage.get("output_tokens", 0) or 0)
+
+        details = getattr(usage, "input_tokens_details", None) if not isinstance(usage, dict) else usage.get("input_tokens_details")
+        cached_input_tokens = 0
+        if details is not None:
+            cached_input_tokens = int(
+                getattr(details, "cached_tokens", 0) if not isinstance(details, dict) else details.get("cached_tokens", 0) or 0
+            )
+        return {
+            "input_tokens": max(0, input_tokens),
+            "cached_input_tokens": max(0, cached_input_tokens),
+            "output_tokens": max(0, output_tokens),
+        }
+
+    def _embedding_usage(self, response: Any) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        if usage is None:
+            return {"input_tokens": 0}
+        prompt_tokens = int(
+            getattr(usage, "prompt_tokens", 0)
+            if not isinstance(usage, dict)
+            else usage.get("prompt_tokens", 0) or 0
+        )
+        total_tokens = int(
+            getattr(usage, "total_tokens", 0)
+            if not isinstance(usage, dict)
+            else usage.get("total_tokens", 0) or 0
+        )
+        return {"input_tokens": max(0, prompt_tokens or total_tokens)}
 
     def _build_grounded_prompt(
         self,

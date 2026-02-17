@@ -7,8 +7,10 @@ from pathlib import Path
 from app.chat import ChatService
 from app.config import get_settings
 from app.db import Database
+from app.fx import FxService
 from app.models import ChatRequest
 from app.openai_client import OpenAIClient
+from app.pricing import PricingCatalog
 from app.retrieval import RetrievalService
 from app.vector_store import VectorStore
 
@@ -33,7 +35,21 @@ def run_eval(input_path: Path, top_k: int) -> None:
         vision_model=settings.openai_vision_model,
     )
     retrieval = RetrievalService(db=db, vectors=vectors, llm=llm)
-    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=llm)
+    pricing_catalog = PricingCatalog.load(settings.pricing_catalog_path)
+    fx_service = FxService(
+        db=db,
+        primary_url=settings.fx_primary_url,
+        refresh_hours=settings.fx_refresh_hours,
+        fallback_rate=settings.usd_inr_fallback_rate,
+    )
+    chat = ChatService(
+        settings=settings,
+        db=db,
+        retrieval=retrieval,
+        llm=llm,
+        pricing_catalog=pricing_catalog,
+        fx_service=fx_service,
+    )
 
     rows = [json.loads(line) for line in input_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not rows:

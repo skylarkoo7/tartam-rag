@@ -11,11 +11,12 @@ import {
   fetchFilters,
   fetchHealth,
   fetchHistory,
+  fetchSessionCosts,
   fetchThreads,
   sendChat,
   triggerIngest
 } from "../lib/api";
-import { ChatMessage, Citation, HealthResponse, MessageRecord, SessionRecord, StyleMode } from "../lib/types";
+import { ChatMessage, Citation, HealthResponse, MessageRecord, SessionCostResponse, SessionRecord, StyleMode } from "../lib/types";
 import { scriptClassName } from "../lib/text";
 
 const PdfSourceViewer = dynamic(
@@ -27,11 +28,19 @@ const THREAD_KEY = "tartam_thread_id";
 
 function mapHistoryRow(row: MessageRecord): ChatMessage {
   let citations: Citation[] = [];
+  let costSummary: ChatMessage["costSummary"] = null;
   if (row.citations_json) {
     try {
       citations = JSON.parse(row.citations_json) as Citation[];
     } catch {
       citations = [];
+    }
+  }
+  if (row.cost_json) {
+    try {
+      costSummary = JSON.parse(row.cost_json);
+    } catch {
+      costSummary = null;
     }
   }
 
@@ -41,6 +50,7 @@ function mapHistoryRow(row: MessageRecord): ChatMessage {
     text: row.text,
     styleTag: row.style_tag,
     citations,
+    costSummary,
     createdAt: row.created_at
   };
 }
@@ -96,9 +106,14 @@ function pickLatestCitation(rows: ChatMessage[]): Citation | null {
 export default function HomePage() {
   const [sessionId, setSessionId] = useState("");
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [sessionCosts, setSessionCosts] = useState<SessionCostResponse | null>(null);
+  const [threadSearch, setThreadSearch] = useState("");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
+  const [sourceCollapsed, setSourceCollapsed] = useState(false);
+  const [sourceWidth, setSourceWidth] = useState(38);
+  const [mobileSourceOpen, setMobileSourceOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bootLoading, setBootLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +126,19 @@ export default function HomePage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  async function reloadSessionCosts(targetSessionId: string) {
+    if (!targetSessionId) {
+      setSessionCosts(null);
+      return;
+    }
+    try {
+      const payload = await fetchSessionCosts(targetSessionId);
+      setSessionCosts(payload);
+    } catch {
+      setSessionCosts(null);
+    }
+  }
 
   async function reloadSessions(current: string) {
     try {
@@ -162,6 +190,7 @@ export default function HomePage() {
         const mapped = history.map(mapHistoryRow);
         setMessages(mapped);
         setActiveCitation(pickLatestCitation(mapped));
+        await reloadSessionCosts(current);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load initial data");
@@ -228,11 +257,13 @@ export default function HomePage() {
         text: assistantText,
         styleTag: response.answer_style,
         citations: response.citations,
+        costSummary: response.cost_summary ?? null,
         createdAt: new Date().toISOString()
       };
       setMessages((prev) => [...prev, assistant]);
       setActiveCitation(response.citations?.[0] ?? null);
       await reloadSessions(sessionId);
+      await reloadSessionCosts(sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat request failed");
     } finally {
@@ -262,6 +293,7 @@ export default function HomePage() {
       setMessages(mapped);
       setActiveCitation(pickLatestCitation(mapped));
       await reloadSessions(nextSessionId);
+      await reloadSessionCosts(nextSessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load session history");
     } finally {
@@ -278,6 +310,7 @@ export default function HomePage() {
       setMessages([]);
       setActiveCitation(null);
       setSessionId(next);
+      setSessionCosts(null);
       window.localStorage.setItem(THREAD_KEY, next);
       setBootLoading(false);
     } catch (err) {
@@ -304,6 +337,19 @@ export default function HomePage() {
     }
   }
 
+  function exportSessionCostJson() {
+    if (!sessionCosts) {
+      return;
+    }
+    const blob = new Blob([JSON.stringify(sessionCosts, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `session_costs_${sessionCosts.session_id}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   const pdfSrc = useMemo(() => {
     if (!activeCitation) {
       return "";
@@ -325,11 +371,23 @@ export default function HomePage() {
     () => ((activeCitation?.chopai_lines || []).join(" ").trim()),
     [activeCitation]
   );
+  const visibleSessions = useMemo(() => {
+    const needle = threadSearch.trim().toLowerCase();
+    if (!needle) {
+      return sessions;
+    }
+    return sessions.filter((item) => {
+      const title = (item.title || "").toLowerCase();
+      const preview = (item.preview || "").toLowerCase();
+      return title.includes(needle) || preview.includes(needle) || item.session_id.toLowerCase().includes(needle);
+    });
+  }, [sessions, threadSearch]);
+  const sourcePanelWidth = Math.max(32, Math.min(52, sourceWidth));
 
   return (
     <main className="h-screen bg-[#f6f1ea] text-[#2f241c]">
       <div className="mx-auto flex h-full max-w-[1780px]">
-        <aside className="hidden w-72 flex-col border-r border-[#e5d6c8] bg-[#f3e7d8] p-4 md:flex">
+        <aside className="hidden w-80 flex-col border-r border-[#e5d6c8] bg-[#f3e7d8] p-4 md:flex">
           <h1 className="text-lg font-semibold tracking-tight">Tartam AI</h1>
           <p className="mt-1 text-xs text-[#7f5e43]">Grounded scripture chat</p>
 
@@ -351,9 +409,45 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8c6749]">Recent Threads</div>
+          <div className="mt-4 rounded-xl border border-[#e6d2bf] bg-[#fff8ef] p-3 text-xs text-[#6d4b31]">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#8c6749]">Session Cost</p>
+            <p className="mt-1 text-sm font-semibold text-[#5a3a22]">
+              ₹{(sessionCosts?.total_inr ?? 0).toFixed(2)} <span className="text-xs text-[#8b6547]">(${(sessionCosts?.total_usd ?? 0).toFixed(4)})</span>
+            </p>
+            <p className="mt-1 text-[11px] text-[#8b6547]">
+              Turns: {sessionCosts?.turns ?? 0} · FX: {sessionCosts?.fx_rate ? sessionCosts.fx_rate.toFixed(2) : "--"} ({sessionCosts?.fx_source || "n/a"})
+            </p>
+            {sessionCosts && Object.keys(sessionCosts.by_model || {}).length > 0 ? (
+              <details className="mt-2 rounded-lg border border-[#ebd4be] bg-white px-2 py-1">
+                <summary className="cursor-pointer text-[11px] font-semibold text-[#6a4529]">Model breakdown</summary>
+                <div className="mt-1 space-y-1">
+                  {Object.entries(sessionCosts.by_model).map(([model, row]) => (
+                    <p key={model} className="text-[11px] text-[#7b5a40]">
+                      {model}: ₹{row.inr.toFixed(4)} (${row.usd.toFixed(6)}) · {row.calls} calls
+                    </p>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            <button
+              type="button"
+              onClick={exportSessionCostJson}
+              className="mt-2 rounded-md border border-[#dabc9f] bg-white px-2 py-1 text-[11px] font-medium text-[#6a4529] disabled:opacity-50"
+              disabled={!sessionCosts}
+            >
+              Export cost JSON
+            </button>
+          </div>
+
+          <div className="mt-5 text-xs font-semibold uppercase tracking-wide text-[#8c6749]">Recent Threads</div>
+          <input
+            value={threadSearch}
+            onChange={(event) => setThreadSearch(event.target.value)}
+            placeholder="Search threads"
+            className="mt-2 rounded-lg border border-[#ddc4ad] bg-[#fffaf5] px-3 py-2 text-xs text-[#5f3e27] outline-none focus:border-[#cb8854]"
+          />
           <div className="mt-2 flex-1 space-y-2 overflow-y-auto pr-1">
-            {sessions.map((item) => (
+            {visibleSessions.map((item) => (
               <button
                 key={item.session_id}
                 className={`w-full rounded-xl px-3 py-2.5 text-left text-xs transition ${
@@ -368,7 +462,7 @@ export default function HomePage() {
                 <div className="mt-1 truncate text-[11px] opacity-85">{shortText(item.preview || "", 60)}</div>
               </button>
             ))}
-            {sessions.length === 0 ? <p className="px-1 text-xs text-[#8f6d51]">No previous threads yet.</p> : null}
+            {visibleSessions.length === 0 ? <p className="px-1 text-xs text-[#8f6d51]">No matching threads.</p> : null}
           </div>
         </aside>
 
@@ -400,6 +494,13 @@ export default function HomePage() {
                 type="button"
               >
                 New chat
+              </button>
+              <button
+                className="rounded-lg border border-[#d8b99c] bg-[#fff8ef] px-3 py-1.5 text-xs font-medium text-[#6c472a] lg:hidden"
+                onClick={() => setMobileSourceOpen((prev) => !prev)}
+                type="button"
+              >
+                {mobileSourceOpen ? "Hide source" : "Show source"}
               </button>
             </div>
           </header>
@@ -440,7 +541,10 @@ export default function HomePage() {
                   key={message.id}
                   message={message}
                   activeCitationId={activeCitation?.citation_id ?? null}
-                  onCitationSelect={(citation) => setActiveCitation(citation)}
+                  onCitationSelect={(citation) => {
+                    setActiveCitation(citation);
+                    setMobileSourceOpen(true);
+                  }}
                 />
               ))}
               <div ref={scrollRef} />
@@ -479,72 +583,131 @@ export default function HomePage() {
           </div>
         </section>
 
-        <aside className="hidden w-[38%] min-w-[420px] max-w-[640px] flex-col border-l border-[#e5d6c8] bg-[#f9f5ef] lg:flex">
+        <aside
+          className={`hidden min-w-[420px] max-w-[760px] flex-col border-l border-[#e5d6c8] bg-[#f9f5ef] transition-all duration-300 lg:flex ${
+            sourceCollapsed ? "w-16" : ""
+          }`}
+          style={sourceCollapsed ? undefined : { width: `${sourcePanelWidth}%` }}
+        >
           <div className="border-b border-[#e8d9cb] px-4 py-3">
-            <h3 className="text-sm font-semibold text-[#5d3d24]">Source Viewer</h3>
-            <p className="mt-1 text-xs text-[#856248]">Click any citation card to open exact source page.</p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-[#5d3d24]">Source Viewer</h3>
+                <p className="mt-1 text-xs text-[#856248]">Click citation cards to open exact source page.</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-[#dabc9f] bg-[#fff8ef] px-2 py-1 text-[11px] font-medium text-[#6a4529]"
+                onClick={() => setSourceCollapsed((prev) => !prev)}
+              >
+                {sourceCollapsed ? "Expand" : "Collapse"}
+              </button>
+            </div>
+            {!sourceCollapsed ? (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[11px] text-[#8a674a]">Panel width</span>
+                <input
+                  type="range"
+                  min={32}
+                  max={52}
+                  value={sourcePanelWidth}
+                  onChange={(event) => setSourceWidth(Number(event.target.value))}
+                  className="w-36 accent-[#bc682d]"
+                />
+              </div>
+            ) : null}
             {!llmReady && health?.llm_generation_error ? (
               <p className="mt-1 text-[11px] text-[#9a4f22]">LLM: {health.llm_generation_error}</p>
             ) : null}
           </div>
 
-          {activeCitation ? (
-            <div className="flex h-full flex-col">
-              <div className="space-y-2 border-b border-[#e8d9cb] px-4 py-3 text-xs text-[#6d4a30]">
-                <p className="text-sm font-semibold text-[#533620]">
-                  {activeCitation.granth_name} · {activeCitation.prakran_name}
-                </p>
-                <p className="flex items-center gap-2">
-                  {activeCitation.prakran_chopai_index ? `Prakran Chopai ${activeCitation.prakran_chopai_index} · ` : ""}
-                  {activeCitation.chopai_number ? `Raw #${activeCitation.chopai_number} · ` : ""}
-                  Page {activeCitation.page_number}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="rounded-md border border-[#dabc9f] bg-[#fff8ef] px-2.5 py-1 text-[11px] font-medium text-[#6a4529] hover:bg-[#fff1e2]"
-                    onClick={() => window.open(pdfSrc, "_blank", "noopener,noreferrer")}
-                  >
-                    Open PDF in new tab
-                  </button>
+          {!sourceCollapsed ? (
+            activeCitation ? (
+              <div className="flex h-full flex-col">
+                <div className="space-y-2 border-b border-[#e8d9cb] px-4 py-3 text-xs text-[#6d4a30]">
+                  <p className="text-sm font-semibold text-[#533620]">
+                    {activeCitation.granth_name} · {activeCitation.prakran_name}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    {activeCitation.prakran_chopai_index ? `Prakran Chopai ${activeCitation.prakran_chopai_index} · ` : ""}
+                    {activeCitation.chopai_number ? `Raw #${activeCitation.chopai_number} · ` : ""}
+                    Page {activeCitation.page_number}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md border border-[#dabc9f] bg-[#fff8ef] px-2.5 py-1 text-[11px] font-medium text-[#6a4529] hover:bg-[#fff1e2]"
+                      onClick={() => window.open(pdfSrc, "_blank", "noopener,noreferrer")}
+                    >
+                      Open PDF in new tab
+                    </button>
+                  </div>
+                </div>
+
+                <div className="h-[50%] border-b border-[#eadaca]">
+                  <PdfSourceViewer
+                    key={activeCitation.citation_id}
+                    fileUrl={pdfFileUrl}
+                    initialPage={activeCitation.page_number}
+                    highlightText={(activeCitation.chopai_lines?.[0] || "").trim()}
+                  />
+                </div>
+
+                <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm text-[#4d321f]">
+                  <section className="space-y-1">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#855f45]">Matched Chopai</h4>
+                    <div className="rounded-xl border border-[#ecd8c3] bg-white px-3 py-2">
+                      {(activeCitation.chopai_lines || []).map((line, idx) => (
+                        <p key={`${activeCitation.citation_id}_${idx}`} className={`leading-6 ${scriptClassName(line)}`}>
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="space-y-1">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[#855f45]">Meaning</h4>
+                    <div className={`rounded-xl border border-[#ecd8c3] bg-white px-3 py-2 leading-6 ${scriptClassName(activeCitation.meaning_text)}`}>
+                      {activeCitation.meaning_text}
+                    </div>
+                  </section>
+
+                  <p className={`text-xs text-[#8a674a] break-all ${scriptClassName(activeChopaiPreview)}`}>Source: {activeCitation.pdf_path}</p>
                 </div>
               </div>
-
-              <div className="h-[50%] border-b border-[#eadaca]">
-                <PdfSourceViewer
-                  key={activeCitation.citation_id}
-                  fileUrl={pdfFileUrl}
-                  initialPage={activeCitation.page_number}
-                />
-              </div>
-
-              <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm text-[#4d321f]">
-                <section className="space-y-1">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-[#855f45]">Matched Chopai</h4>
-                  <div className="rounded-xl border border-[#ecd8c3] bg-white px-3 py-2">
-                    {(activeCitation.chopai_lines || []).map((line, idx) => (
-                      <p key={`${activeCitation.citation_id}_${idx}`} className={`leading-6 ${scriptClassName(line)}`}>
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="space-y-1">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-[#855f45]">Meaning</h4>
-                  <div className={`rounded-xl border border-[#ecd8c3] bg-white px-3 py-2 leading-6 ${scriptClassName(activeCitation.meaning_text)}`}>
-                    {activeCitation.meaning_text}
-                  </div>
-                </section>
-
-                <p className={`text-xs text-[#8a674a] break-all ${scriptClassName(activeChopaiPreview)}`}>Source: {activeCitation.pdf_path}</p>
-              </div>
-            </div>
+            ) : (
+              <div className="p-4 text-sm text-[#7b5a43]">No citation selected yet.</div>
+            )
           ) : (
-            <div className="p-4 text-sm text-[#7b5a43]">No citation selected yet.</div>
+            <div className="p-2 text-[11px] text-[#8a674a]">Source hidden</div>
           )}
         </aside>
       </div>
+
+      {mobileSourceOpen && activeCitation ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 max-h-[70vh] rounded-t-2xl border-t border-[#dfc6ad] bg-[#fff9f3] shadow-[0_-10px_30px_rgba(53,32,20,0.18)] lg:hidden">
+          <div className="flex items-center justify-between border-b border-[#eadccf] px-4 py-2">
+            <p className="text-xs font-semibold text-[#6d4a30]">
+              {activeCitation.granth_name} · {activeCitation.prakran_name} · p.{activeCitation.page_number}
+            </p>
+            <button
+              type="button"
+              onClick={() => setMobileSourceOpen(false)}
+              className="rounded-md border border-[#dabc9f] bg-[#fff8ef] px-2 py-1 text-[11px] text-[#6a4529]"
+            >
+              Close
+            </button>
+          </div>
+          <div className="h-[60vh]">
+            <PdfSourceViewer
+              key={`${activeCitation.citation_id}_mobile`}
+              fileUrl={pdfFileUrl}
+              initialPage={activeCitation.page_number}
+              highlightText={(activeCitation.chopai_lines?.[0] || "").trim()}
+            />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

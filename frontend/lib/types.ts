@@ -6,6 +6,31 @@ export interface ChatFilters {
   prakran?: string;
 }
 
+export type UsageStage = "plan_query" | "query_embedding" | "generate_answer" | "summarize_memory" | "convert_answer" | "ocr_recovery";
+
+export interface UsageLineItem {
+  stage: UsageStage;
+  provider: string;
+  model: string;
+  endpoint: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  usd_cost: number;
+  inr_cost: number;
+  pricing_version: string;
+  fx_rate: number;
+}
+
+export interface CostSummary {
+  total_usd: number;
+  total_inr: number;
+  currency_local: "INR";
+  fx_rate: number;
+  fx_source: string;
+  line_items: UsageLineItem[];
+}
+
 export interface Citation {
   citation_id: string;
   granth_name: string;
@@ -35,6 +60,7 @@ export interface ChatResponse {
   not_found: boolean;
   follow_up_question?: string;
   citations: Citation[];
+  cost_summary?: CostSummary | null;
   context_state?: {
     granth_name?: string | null;
     prakran_number?: number | null;
@@ -68,6 +94,7 @@ export interface MessageRecord {
   text: string;
   style_tag: string;
   citations_json: string | null;
+  cost_json?: string | null;
   created_at: string;
 }
 
@@ -81,6 +108,17 @@ export interface SessionRecord {
 
 export interface ThreadCreateResponse {
   session_id: string;
+}
+
+export interface SessionCostResponse {
+  session_id: string;
+  turns: number;
+  total_usd: number;
+  total_inr: number;
+  fx_rate: number;
+  fx_source: string;
+  by_model: Record<string, { usd: number; inr: number; calls: number }>;
+  items: CostSummary[];
 }
 
 export interface HealthResponse {
@@ -100,5 +138,6 @@ export interface ChatMessage {
   text: string;
   styleTag: string;
   citations: Citation[];
+  costSummary?: CostSummary | null;
   createdAt: string;
 }

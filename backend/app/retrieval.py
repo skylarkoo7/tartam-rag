@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .db import Database, RetrievedUnit
 from .language import query_variants
 from .openai_client import OpenAIClient
+from .pricing import UsageCollector
 from .text_quality import garbled_ratio
 from .vector_store import VectorStore
 
@@ -28,6 +29,7 @@ class RetrievalService:
         top_k: int,
         granth: str | None,
         prakran: str | None,
+        usage_collector: UsageCollector | None = None,
     ) -> list[RetrievalResult]:
         variants = query_variants(query, style)
         if not variants:
@@ -49,7 +51,11 @@ class RetrievalService:
                 where = where_terms
 
             for variant in variants:
-                emb = self.llm.embed(variant)
+                emb = self.llm.embed(
+                    variant,
+                    usage_collector=usage_collector,
+                    usage_stage="query_embedding",
+                )
                 vector_hits = self.vectors.query(query_embedding=emb, limit=max(top_k * 3, 12), where=where)
                 ids = [item_id for item_id, _ in vector_hits]
                 by_id = self.db.fetch_units_by_ids(ids)
@@ -113,7 +119,7 @@ def readability_multiplier(unit: RetrievedUnit) -> float:
     )
     ratio = garbled_ratio(sample)
     if ratio >= 0.03:
-        return 0.35
+        return 0.15
     if ratio >= 0.015:
-        return 0.60
+        return 0.45
     return 1.0

@@ -7,6 +7,8 @@ def _unit() -> RetrievedUnit:
         id="u1",
         granth_name="Shri Ras",
         prakran_name="Prakran A",
+        prakran_number=1,
+        prakran_confidence=0.9,
         chopai_number="1",
         prakran_chopai_index=1,
         chopai_lines=["line 1", "line 2"],

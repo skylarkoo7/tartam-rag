@@ -14,6 +14,9 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 - Session context memory for granth/prakran/chopai continuity across follow-up turns
 - One-click answer conversion options (Hindi/Gujarati/English + script variants)
 - Relative chopai indexing inside each prakran (supports queries like `prakran 14 chaupai 4`)
+- Per-prompt cost accounting with line-item USD + INR breakdown (planning, embeddings, generation, memory, OCR/convert when used)
+- Session-level cost totals endpoint and export-ready payload
+- Archived thread support for safe cleanup of technical/eval sessions
 
 ## Current Status
 
@@ -161,6 +164,7 @@ python -m scripts.run_ingest
 - `POST /api/chat`
 - `POST /api/convert`
 - `GET /api/pdf/{citation_id}`
+- `GET /api/costs/{session_id}`
 
 ### `POST /api/chat` example
 
@@ -220,6 +224,34 @@ Outputs:
 - `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.html`
 - `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.pdf`
 - `/Users/skylark/Documents/github/tartam-rag/backend/reports/multilingual_chat_validation.json`
+
+## Thread Cleanup (Safe Archive)
+
+Archive technical sessions without deleting user chats:
+
+```bash
+cd backend
+PYTHONPATH=. python -m scripts.cleanup_threads
+```
+
+You can customize patterns:
+
+```bash
+cd backend
+PYTHONPATH=. python -m scripts.cleanup_threads --patterns "eval_,report-,smoke-"
+```
+
+## Pricing Catalog Refresh
+
+Refresh pricing catalog metadata against OpenAI pricing page:
+
+```bash
+cd backend
+PYTHONPATH=. python -m scripts.refresh_pricing_catalog
+```
+
+Default catalog path:
+- `/Users/skylark/Documents/github/tartam-rag/backend/app/pricing_catalog.json`
 
 ## Makefile Shortcuts (from repo root)
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .db import Database, RetrievedUnit
-from .gemini_client import GeminiClient
 from .language import query_variants
+from .openai_client import OpenAIClient
 from .text_quality import garbled_ratio
 from .vector_store import VectorStore
 
@@ -16,10 +16,10 @@ class RetrievalResult:
 
 
 class RetrievalService:
-    def __init__(self, db: Database, vectors: VectorStore, gemini: GeminiClient):
+    def __init__(self, db: Database, vectors: VectorStore, llm: OpenAIClient):
         self.db = db
         self.vectors = vectors
-        self.gemini = gemini
+        self.llm = llm
 
     def search(
         self,
@@ -49,7 +49,7 @@ class RetrievalService:
                 where = where_terms
 
             for variant in variants:
-                emb = self.gemini.embed(variant)
+                emb = self.llm.embed(variant)
                 vector_hits = self.vectors.query(query_embedding=emb, limit=max(top_k * 3, 12), where=where)
                 ids = [item_id for item_id, _ in vector_hits]
                 by_id = self.db.fetch_units_by_ids(ids)

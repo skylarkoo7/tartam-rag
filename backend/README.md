@@ -10,12 +10,13 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Add your Gemini key in `.env`:
+Add your OpenAI key in `.env`:
 
 ```bash
-GEMINI_API_KEY=your_key_here
-GEMINI_CHAT_MODEL=gemini-3-flash-preview
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+OPENAI_API_KEY=your_key_here
+OPENAI_CHAT_MODEL=gpt-5.2
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_VISION_MODEL=gpt-5.2
 ```
 
 ## Run API

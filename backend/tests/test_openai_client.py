@@ -1,5 +1,5 @@
 from app.db import RetrievedUnit
-from app.gemini_client import GeminiClient
+from app.openai_client import OpenAIClient
 
 
 def _unit() -> RetrievedUnit:
@@ -23,8 +23,8 @@ def _unit() -> RetrievedUnit:
     )
 
 
-def test_generate_answer_without_llm_requires_key() -> None:
-    client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
+def test_generate_answer_without_key_returns_not_found_template() -> None:
+    client = OpenAIClient(api_key=None, chat_model="x", embedding_model="y", vision_model="z")
     result = client.generate_answer(
         question="what does this teach",
         citations=[_unit()],
@@ -32,18 +32,18 @@ def test_generate_answer_without_llm_requires_key() -> None:
         conversation_context=[{"role": "user", "text": "hello"}],
     )
 
-    assert "LLM is not configured" in result
+    assert "I could not find this clearly" in result
 
 
-def test_plan_query_without_llm_returns_default() -> None:
-    client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
+def test_plan_query_without_key_returns_default() -> None:
+    client = OpenAIClient(api_key=None, chat_model="x", embedding_model="y", vision_model="z")
     plan = client.plan_query("what does this teach", conversation_context=[])
     assert plan["intent"] == "answer_user_question_from_scripture"
     assert isinstance(plan["sub_queries"], list)
 
 
-def test_summarize_memory_without_llm_returns_fallback() -> None:
-    client = GeminiClient(api_key=None, chat_model="x", embedding_model="y")
+def test_summarize_memory_without_key_returns_fallback() -> None:
+    client = OpenAIClient(api_key=None, chat_model="x", embedding_model="y", vision_model="z")
     summary, key_facts = client.summarize_memory(
         existing_summary="Earlier discussion about devotion.",
         existing_key_facts=["User prefers Hinglish responses."],
@@ -55,3 +55,11 @@ def test_summarize_memory_without_llm_returns_fallback() -> None:
 
     assert "devotion" in summary.lower() or "explain this chopai" in summary.lower()
     assert key_facts
+
+
+def test_embed_fallback_produces_nonempty_vector() -> None:
+    client = OpenAIClient(api_key=None, chat_model="x", embedding_model="y", vision_model="z")
+    vector = client.embed("prakran 14 chaupai 4")
+
+    assert len(vector) > 0
+    assert any(value != 0 for value in vector)

@@ -18,8 +18,7 @@ Local-first RAG chatbot for Tartam scripture corpus with:
 ## Current Status
 
 Implemented in this repository:
-- `backend/` FastAPI API + ingestion + hybrid retrieval + Gemini integration
-- `backend/` FastAPI API + ingestion + hybrid retrieval + Gemini/OpenAI provider routing
+- `backend/` FastAPI API + ingestion + hybrid retrieval + OpenAI integration
 - `frontend/` Next.js chat app with filters, session history, inline citations
 - `tartam/` sample PDF corpus (Hindi-arth + Gujarati-arth)
 
@@ -35,8 +34,7 @@ Implemented in this repository:
   - Chroma vector search (if installed)
   - Reciprocal Rank Fusion (RRF)
 - Chat generation
-  - Provider router: `LLM_PROVIDER=auto|gemini|openai`
-  - Gemini primary + OpenAI fallback (when configured)
+  - OpenAI-only pipeline (`gpt-5.2` + `text-embedding-3-large`)
   - Uses retrieved citations as strict grounding context
   - Applies deterministic reference constraints (granth/prakran/chopai) before generation
   - LLM response format:
@@ -58,7 +56,7 @@ Implemented in this repository:
 - Session history drawer (server-backed sessions + local current-session id)
 - Thread creation/listing via API (`POST /api/threads`, `GET /api/threads`)
 - Interactive citation cards that sync with right-side PDF viewer
-- LLM runtime health badge (shows if Gemini is available or quota/network blocked)
+- LLM runtime health badge (shows OpenAI availability/health)
 - One-click ingestion trigger button
 
 ## Repository Structure
@@ -88,8 +86,7 @@ Implemented in this repository:
 - Python 3.11+
 - Node.js 20.9+ (Next.js 16 requirement)
 - npm
-- Gemini API key (for full LLM reasoning and embeddings)
-- Optional OpenAI API key (for LLM fallback/routing)
+- OpenAI API key (for LLM reasoning, embeddings, and OCR recovery)
 
 Optional for OCR fallback:
 - Tesseract OCR
@@ -110,12 +107,10 @@ cp .env.example .env
 Update `/Users/skylark/Documents/github/tartam-rag/backend/.env`:
 
 ```env
-GEMINI_API_KEY=your_key_here
-GEMINI_CHAT_MODEL=gemini-3-flash-preview
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
-OPENAI_API_KEY=
-OPENAI_CHAT_MODEL=gpt-5.1
-LLM_PROVIDER=auto
+OPENAI_API_KEY=your_key_here
+OPENAI_CHAT_MODEL=gpt-5.2
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_VISION_MODEL=gpt-5.2
 ```
 
 Run API:
@@ -226,16 +221,16 @@ make test
 
 - Gujarati PDFs may require AES decryption support from `pycryptodome`.
 - OCR fallback is enabled by default and can be tuned via `.env`.
-- Without Gemini/OpenAI keys, chat reasoning is disabled (retrieval-only context still available).
-- `text-embedding-004` is deprecated by Google; this project now uses `gemini-embedding-001`.
+- Without `OPENAI_API_KEY`, chat reasoning is disabled (retrieval-only context still available).
 - Retrieval quality depends on PDF extraction quality and parser heuristics.
-- Gemini keys can fail due quota/auth (e.g. `RESOURCE_EXHAUSTED`, leaked key `PERMISSION_DENIED`); UI/API surfaces this explicitly via `/api/health` and chat debug payload.
+- OpenAI keys can fail due quota/auth/rate limits; UI/API surfaces this explicitly via `/api/health` and chat debug payload.
 
 Recommended OCR settings (already enabled in sample env):
 - `ENABLE_OCR_FALLBACK=true`
 - `OCR_QUALITY_THRESHOLD=0.22`
 - `OCR_FORCE_ON_GARBLED=true`
-- `INGEST_GEMINI_OCR_MAX_PAGES=200`
+- `INGEST_OPENAI_OCR_MAX_PAGES=200`
+- `ALLOW_OPENAI_PAGE_OCR_RECOVERY=true`
 
 ## Frontend Status (answer to "what about frontend?")
 
@@ -259,5 +254,6 @@ Frontend is implemented and included in this repo under `/Users/skylark/Document
   - `pydantic==2.12.5`
   - `chromadb==1.5.0`
   - `pypdf==6.7.0`
-  - `google-genai==1.63.0`
   - `openai==2.21.0`
+  - default chat model: `gpt-5.2`
+  - default embedding model: `text-embedding-3-large`

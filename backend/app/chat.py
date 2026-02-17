@@ -7,8 +7,8 @@ from dataclasses import replace
 from .config import Settings
 from .db import Database, RetrievedUnit
 from .language import detect_style, normalize_text, render_in_style, resolve_output_style, transliterate_to_latin
-from .llm_router import LLMRouter
 from .models import Citation, ChatRequest, ChatResponse
+from .openai_client import OpenAIClient
 from .query_context import (
     QueryContext,
     build_query_hints,
@@ -28,7 +28,7 @@ class ChatService:
         settings: Settings,
         db: Database,
         retrieval: RetrievalService,
-        llm: LLMRouter,
+        llm: OpenAIClient,
     ):
         self.settings = settings
         self.db = db
@@ -81,9 +81,9 @@ class ChatService:
         if not self.llm.enabled:
             answer = (
                 "LLM is not configured. This app is set to agentic mode and requires a valid "
-                "GEMINI_API_KEY or OPENAI_API_KEY to reason over retrieved chunks."
+                "OPENAI_API_KEY to reason over retrieved chunks."
             )
-            follow_up = "Add GEMINI_API_KEY or OPENAI_API_KEY in backend/.env and restart backend."
+            follow_up = "Add OPENAI_API_KEY in backend/.env and restart backend."
             citations = []
             not_found = True
             scores = []
@@ -188,10 +188,10 @@ class ChatService:
                     ):
                         answer = render_in_style(
                             "I could not generate a grounded explanation right now because the LLM call failed. "
-                            "Please retry after checking Gemini API connectivity/model access.",
+                            "Please retry after checking OpenAI API connectivity/model access.",
                             answer_style,
                         )
-                        follow_up = "Retry now or confirm GEMINI_API_KEY/model access from backend."
+                        follow_up = "Retry now or confirm OPENAI_API_KEY/model access from backend."
                         not_found = True
                     else:
                         if query_context.requires_count and count_result is not None and count_result > 0:
@@ -237,7 +237,7 @@ class ChatService:
                 "llm_enabled": self.llm.enabled,
                 "llm_generation_error": self.llm.last_generation_error,
                 "ocr_error": self.llm.last_ocr_error,
-                "llm_provider": self.llm.provider,
+                "llm_provider": "openai",
             }
             if self.settings.allow_debug_payloads
             else None
@@ -425,9 +425,9 @@ class ChatService:
             return None
         lowered = text.lower()
         if "nodename nor servname provided" in lowered or "temporary failure in name resolution" in lowered:
-            return "Network/DNS issue while contacting Gemini."
+            return "Network/DNS issue while contacting OpenAI."
         if "permission" in lowered or "unauthorized" in lowered or "api key" in lowered:
-            return "Gemini authentication/permissions issue."
+            return "OpenAI authentication/permissions issue."
         return text[:180]
 
     def _is_ambiguous_reference(
@@ -491,7 +491,7 @@ class ChatService:
         if not is_garbled_text(unit.chunk_text):
             return unit
 
-        if not self.settings.allow_gemini_page_ocr_recovery:
+        if not self.settings.allow_openai_page_ocr_recovery:
             return unit
 
         ocr_text = self.llm.ocr_pdf_page(unit.pdf_path, unit.page_number)

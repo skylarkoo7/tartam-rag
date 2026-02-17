@@ -1,0 +1,72 @@
+# Tartam RAG Multilingual Live Validation
+Generated at: `2026-02-17T12:53:10`
+
+## 1. English
+- Query: `In ShriSingaar prakran 14, what is taught about hukam?`
+- Session: `report-en-20260217125030`
+- Answer Style: `en`
+- Not Found: `False`
+
+### Answer
+1) Direct Answer: In ShriSingaar prakran 14, “hukam” is taught as ShriRajji’s divine order under which the brahm-atmas live and even speak. The text says the knowledge-method and the experience of Paramdham’s sukh are given through “hak hukam,” and the devotee is to hold that “hukam” in the heart and act to reveal Parmbrahm’s form in this world. 2) Explanation from Chopai: “Hak hukam” is shown as the guiding command: through it, “ilm ya vidh” is given and sukh is bestowed with wisdom (“hikmat”). The devotee’s stance is surrender: “we are under this hukam; there is no ‘my-ness’ in us,” and even “I speak” happens by hukam. Practice is also given: take the “mutlak” hukam and “dharan” it in the heart, then do the work of making the divine form manifest where doubts usually remain. A fruit is indicated: by ShriRajji’s order and knowing TARTAM, the brahm-atmas receive the immense sukha of Dhamdhani and Paramdham. 3) Grounding: [2]
+
+### Top Citations
+- ShriSingaar | Unknown Prakran | p.14
+- ShriSingaar | Prakran 14 | p.15
+- ShriSingaar | Prakran 14 | p.15
+
+## 2. Hindi
+- Query: `ShriSingaar ग्रंथ के प्रकरण 14 में हुकम के बारे में क्या बताया है?`
+- Session: `report-hi-20260217125030`
+- Answer Style: `hi`
+- Not Found: `False`
+
+### Answer
+1) Direct Answer: ShriSingaar के प्रकरण 14 में “हुकम” को श्रीराजजी (हक) का आदेश बताया है—जिसके अधीन ब्रह्मआत्माएँ रहती हैं और वही बोलना/कहना भी उसी हुकम से होता है। इसी हुकम (इलम/विधि) के द्वारा तारतम जानने से परमधाम के सुख दिए गए, और उसी हुकम की प्रेरणा से परमधाम-वर्णन प्रकट करने की चाहना हुई। 2) Explanation from Chopai: चोपाई 62 में आता है कि “हक हुकमें इलम या विध” से—अर्थात हक के हुकम के अनुसार ज्ञान/विधि द्वारा—परमधाम के सुख कुशलता से मिलते हैं। चोपाई 63 में “हम तो हुए इत हुकम तले” कहकर सिखाया कि हुकम के नीचे रहना मतलब अहंभाव छोड़ना; “मैं” भी जो बोले, वह “हक का हुकम” ही है। चोपाई 64 में बताया कि परमधाम का वर्णन करने की चाहना भी “हुकम” से उठती है, इसलिए उसी आदेश को हृदय में धारण कर जगत में परब्रह्म का स्वरूप प्रकट करना है। चोपाई 65 में संकेत है कि हक का हुकम पहले दिया गया था, और अब वही हुकम “हाथ अपने लिया”—यानी उसे लेकर हृदय में विराजमान होकर यशोगान/कार्य कराते हैं। 3) Grounding: [2]
+
+### Top Citations
+- ShriSingaar | Unknown Prakran | p.14
+- ShriSingaar | Prakran 14 | p.15
+- ShriSingaar | Prakran 14 | p.15
+
+## 3. Gujarati
+- Query: `શ્રીસિંગાર ગ્રંથના પ્રકરણ 14 માં હુકમ વિશે શું સમજાવ્યું છે?`
+- Session: `report-gu-20260217125030`
+- Answer Style: `gu`
+- Not Found: `False`
+
+### Answer
+1) Direct Answer: પ્રકરણ 14 મુજબ “હુકમ” એટલે શ્રીરાજજીનો આદેશ—જેના તળે સૌ બ્રહ્માત્માઓ અધિન છે: “हम तो हुए इत हुकम तले... ऐ मैं बोले हक का हुकम” [2]. આ હુકમથી જ તારતમનું જ્ઞાન/વિધિ મળે છે અને પરમધામના સુખો “हक हुकमें... सुख दिए” એમ પ્રાપ્ત થાય છે [2]. 2) Explanation from Chopai: ચોપાઈ કહે છે કે આપણે સૌ “શ્રીરાજજીके आदेशके अधीन” છીએ, એટલે હુકમમાં અહંકાર રાખવાનો આધાર નથી [2]. જે કંઈ વાણી/વર્ણન થાય છે તે પણ “श्रीराजजीके आदेशसे ही” થાય છે—અર્થાત્ હુકમ જ અધિકાર અને પ્રેરણા છે [2]. હુકમનું પાલન જરૂરી છે કારણ કે એ જ “इलम या विध” દ્વારા પરમધામના સુખો કુશળતાથી અપાવે છે [2]. હુકમ ન માનવાથી શું ચેતવણી/પરિણામ થાય તે પ્રકરણ 14ની આપેલી ચોપાઈઓમાં સ્પષ્ટ રીતે મળતું નથી. 3) Grounding: [2] હુકમ ન માનવાથી શું પરિણામ થાય—એ તમે પ્રકરણ 14ની કઈ ચોક્કસ ચોપાઈ/પંક્તિ (નંબર) પરથી પૂછો છો?
+
+### Top Citations
+- ShriSingaar | Unknown Prakran | p.14
+- ShriSingaar | Prakran 14 | p.15
+- ShriSingaar | Prakran 14 | p.15
+
+## 4. Hindi (Roman)
+- Query: `Shrisingaar granth ke prakran 14 me hukam ke baare me kya bataya hai?`
+- Session: `report-hi-latn-20260217125030`
+- Answer Style: `hi_latn`
+- Not Found: `False`
+
+### Answer
+1) Direct Answer: Prakran 14 me “hukam” ka arth ShriRajji (Haq) ka aadesh/amar hai—jiske tale sab brahma-atmaen hain, aur jo kuch kaha jaata hai woh bhi usi hukam se hota hai. Hukam ke dwara “ilm/vidh” aur “hikmat” se Paramdham ke sukh milte hain, aur usi hukam ko hriday me dharan karke jagat me ParBrahm ka swaroop prakat karna bataya hai. 2) Explanation from Chopai: Text kehta hai: “hakk hukme” se hi ilm/vidh milti hai aur “sukh diye kar hikmat”—yaani hukam jeevan me gyaan aur sukh ka sadhan banta hai. “Hum to hue it hukam tale, mai na hamari hamme”—hukam maan-ne ka bhaav ahankar-tyaag aur sampoorn samarpan hai. “Hukam... le hak hukam mutlak... hriday me dharan”—upay yahi diya: us aadesh ko dil me basaakar, is “jhuthi jimi” (nashwar jagat) me Parmatma ka swaroop zahir karo. Hukam na maan-ne ka spasht parinaam yahan seedhe shabdon me nahi aata; par yeh zarur hai ki jahan “kaboo kisi ka sandeh door nahi hua,” wahan hukam se prakat karna hi uddeshya bataya. 3) Grounding: [2], [3], [4], [5], [6] I could not find this clearly in available texts. Aap “hukam na manane ke parinaam” ke liye Prakran 14 ki kaunsi chopai/line range dekhna chahte hain (62-65 ke aage ya pehle)?
+
+### Top Citations
+- ShriSingaar | Unknown Prakran | p.14
+- ShriSingaar | Prakran 14 | p.15
+- ShriSingaar | Prakran 14 | p.15
+
+## 5. Gujarati (Roman)
+- Query: `Shrisingaar granth na prakran 14 ma hukam vishe shu kahyu che?`
+- Session: `report-gu-latn-20260217125030`
+- Answer Style: `gu_latn`
+- Not Found: `False`
+
+### Answer
+1) Direct Answer: ShriSingaar Granth na Prakran 14 ma “hukam” ne ShriRajji (Haq) no aadesh/ajna tarike batavyo chhe—je taratam-gnan dwara brahma-atmaone Paramdham na sukh aape chhe (Chopai 62). Aa prakaran ma bhakt/atma ne “hukam tale” rahine ahambhav chhodi, je kai bolay/karay te pan Haq na hukam thi chhe em manva nu shikshan chhe (Chopai 63-64). 2) Explanation from Chopai: “Haq hukme” etle ShriRajji na aadesh pramane gnan-ni vidhi thi sukh malya—jagat ma na aavya chhata pan Paramdham na anubhav thaya (62). Aapde badha hukam adhin chhiye; “hu” pan je bole chhe te Haq na hukam thi—etle ahankar ne jagya nathi (63). Hukam thi ja Paramdham nu varnan karva ni ichchha jagi; etle e “hukam mutlak” ne hriday ma dharine, aa nashvar jagat ma Parbrahm nu swaroop prakat karva nu kartavya batavyu chhe (64). Aa rite, hukam no arth: aadesh/adhinata, ane bhakt no marg: hukam ne hriday ma dharvo, aham chhodi seva-vachan karva. 3) Grounding: [2]
+
+### Top Citations
+- ShriSingaar | Unknown Prakran | p.14
+- ShriSingaar | Prakran 14 | p.15
+- ShriSingaar | Prakran 14 | p.15

@@ -10,10 +10,8 @@ from fastapi.responses import FileResponse
 from .chat import ChatService
 from .config import Settings, get_settings
 from .db import Database
-from .gemini_client import GeminiClient
 from .ingestion import IngestionService
 from .language import convert_text_fallback
-from .llm_router import LLMRouter
 from .models import (
     ChatRequest,
     ChatResponse,
@@ -33,31 +31,26 @@ from .retrieval import RetrievalService
 from .vector_store import VectorStore
 
 
-def build_services(settings: Settings) -> tuple[Database, VectorStore, GeminiClient, LLMRouter, IngestionService, ChatService]:
+def build_services(settings: Settings) -> tuple[Database, VectorStore, OpenAIClient, IngestionService, ChatService]:
     db = Database(settings.db_path)
     db.init_db()
 
     vectors = VectorStore(settings.chroma_path)
-    gemini = GeminiClient(
-        api_key=settings.gemini_api_key,
-        chat_model=settings.gemini_chat_model,
-        embedding_model=settings.gemini_embedding_model,
-        ocr_models=settings.gemini_ocr_models,
-    )
     openai = OpenAIClient(
         api_key=settings.openai_api_key,
         chat_model=settings.openai_chat_model,
+        embedding_model=settings.openai_embedding_model,
+        vision_model=settings.openai_vision_model,
     )
-    llm = LLMRouter(provider=settings.llm_provider, gemini=gemini, openai=openai)
 
-    ingest = IngestionService(settings=settings, db=db, vectors=vectors, gemini=gemini)
-    retrieval = RetrievalService(db=db, vectors=vectors, gemini=gemini)
-    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=llm)
-    return db, vectors, gemini, llm, ingest, chat
+    ingest = IngestionService(settings=settings, db=db, vectors=vectors, llm=openai)
+    retrieval = RetrievalService(db=db, vectors=vectors, llm=openai)
+    chat = ChatService(settings=settings, db=db, retrieval=retrieval, llm=openai)
+    return db, vectors, openai, ingest, chat
 
 
 settings = get_settings()
-database, vectors, gemini_client, llm_client, ingestion_service, chat_service = build_services(settings)
+database, vectors, llm_client, ingestion_service, chat_service = build_services(settings)
 rate_limiter = InMemoryRateLimiter(max_per_minute=settings.request_rate_limit_per_min)
 
 app = FastAPI(title=settings.app_name)
@@ -84,7 +77,7 @@ def health() -> HealthResponse:
         vector_ready=vectors.available,
         indexed_chunks=database.count_units(),
         llm_enabled=llm_client.enabled,
-        llm_provider=llm_client.provider,
+        llm_provider="openai",
         llm_generation_error=_compact_error(llm_client.last_generation_error),
         ocr_error=_compact_error(llm_client.last_ocr_error),
     )
@@ -202,10 +195,10 @@ def _compact_error(value: str | None) -> str | None:
     if not text:
         return None
     lowered = text.lower()
-    if "resource_exhausted" in lowered or "quota exceeded" in lowered:
-        return "Gemini quota exhausted (free-tier limit hit)."
+    if "quota exceeded" in lowered or "rate limit" in lowered:
+        return "OpenAI quota/rate-limit reached."
     if "nodename nor servname provided" in lowered or "name resolution" in lowered:
-        return "Network/DNS issue while contacting Gemini."
+        return "Network/DNS issue while contacting OpenAI."
     if "api key" in lowered or "permission" in lowered or "unauthorized" in lowered:
-        return "Gemini authentication/permissions issue."
+        return "OpenAI authentication/permissions issue."
     return text[:180]

@@ -23,15 +23,10 @@ class Settings:
         ]
     )
 
-    gemini_api_key: str | None = None
-    gemini_chat_model: str = "gemini-3-flash-preview"
-    gemini_embedding_model: str = "gemini-embedding-001"
-    gemini_ocr_models: list[str] = field(
-        default_factory=lambda: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-flash-preview"]
-    )
     openai_api_key: str | None = None
-    openai_chat_model: str = "gpt-5.1"
-    llm_provider: str = "auto"
+    openai_chat_model: str = "gpt-5.2"
+    openai_embedding_model: str = "text-embedding-3-large"
+    openai_vision_model: str = "gpt-5.2"
 
     retrieval_top_k: int = 6
     minimum_grounding_score: float = 0.015
@@ -41,8 +36,8 @@ class Settings:
     enable_ocr_fallback: bool = True
     ocr_quality_threshold: float = 0.22
     ocr_force_on_garbled: bool = True
-    ingest_gemini_ocr_max_pages: int = 200
-    allow_gemini_page_ocr_recovery: bool = True
+    ingest_openai_ocr_max_pages: int = 200
+    allow_openai_page_ocr_recovery: bool = True
 
     @property
     def corpus_paths(self) -> list[Path]:
@@ -114,13 +109,10 @@ def get_settings() -> Settings:
     settings.env = os.getenv("ENV", settings.env)
     settings.api_prefix = os.getenv("API_PREFIX", settings.api_prefix)
 
-    settings.gemini_api_key = os.getenv("GEMINI_API_KEY", settings.gemini_api_key)
-    settings.gemini_chat_model = os.getenv("GEMINI_CHAT_MODEL", settings.gemini_chat_model)
-    settings.gemini_embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", settings.gemini_embedding_model)
-    settings.gemini_ocr_models = _split_csv(os.getenv("GEMINI_OCR_MODELS"), settings.gemini_ocr_models)
     settings.openai_api_key = os.getenv("OPENAI_API_KEY", settings.openai_api_key)
     settings.openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", settings.openai_chat_model)
-    settings.llm_provider = os.getenv("LLM_PROVIDER", settings.llm_provider).strip().lower()
+    settings.openai_embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", settings.openai_embedding_model)
+    settings.openai_vision_model = os.getenv("OPENAI_VISION_MODEL", settings.openai_vision_model)
 
     settings.corpus_dirs = _split_csv(os.getenv("CORPUS_DIRS"), settings.corpus_dirs)
 
@@ -136,11 +128,11 @@ def get_settings() -> Settings:
     settings.enable_ocr_fallback = _to_bool(os.getenv("ENABLE_OCR_FALLBACK"), settings.enable_ocr_fallback)
     settings.ocr_quality_threshold = _to_float(os.getenv("OCR_QUALITY_THRESHOLD"), settings.ocr_quality_threshold)
     settings.ocr_force_on_garbled = _to_bool(os.getenv("OCR_FORCE_ON_GARBLED"), settings.ocr_force_on_garbled)
-    settings.ingest_gemini_ocr_max_pages = _to_int(
-        os.getenv("INGEST_GEMINI_OCR_MAX_PAGES"), settings.ingest_gemini_ocr_max_pages
+    settings.ingest_openai_ocr_max_pages = _to_int(
+        os.getenv("INGEST_OPENAI_OCR_MAX_PAGES"), settings.ingest_openai_ocr_max_pages
     )
-    settings.allow_gemini_page_ocr_recovery = _to_bool(
-        os.getenv("ALLOW_GEMINI_PAGE_OCR_RECOVERY"), settings.allow_gemini_page_ocr_recovery
+    settings.allow_openai_page_ocr_recovery = _to_bool(
+        os.getenv("ALLOW_OPENAI_PAGE_OCR_RECOVERY"), settings.allow_openai_page_ocr_recovery
     )
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)

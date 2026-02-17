@@ -5,10 +5,10 @@ chromadb==1.5.0
 pypdf==6.7.0
 pymupdf==1.27.1
 pycryptodome==3.23.0
-google-genai==1.63.0
 openai==2.21.0
 python-multipart==0.0.22
 indic-transliteration==2.3.78
 rapidfuzz==3.14.3
+reportlab==4.4.10
 pytest==9.0.2
 httpx==0.28.1

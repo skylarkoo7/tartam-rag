@@ -7,8 +7,8 @@ from pathlib import Path
 
 from .config import Settings
 from .db import Database
-from .gemini_client import GeminiClient
 from .language import normalize_text
+from .openai_client import OpenAIClient
 from .parsing import ParsedUnit, parse_pdf_to_units
 from .pdf_extract import PDFExtractionError, PageText, extract_pdf_pages
 from .text_quality import is_garbled_text, likely_misencoded_indic_text
@@ -29,11 +29,11 @@ class IngestStats:
 
 
 class IngestionService:
-    def __init__(self, settings: Settings, db: Database, vectors: VectorStore, gemini: GeminiClient):
+    def __init__(self, settings: Settings, db: Database, vectors: VectorStore, llm: OpenAIClient):
         self.settings = settings
         self.db = db
         self.vectors = vectors
-        self.gemini = gemini
+        self.llm = llm
 
     def ingest(self) -> IngestStats:
         stats = IngestStats()
@@ -58,17 +58,17 @@ class IngestionService:
                     force_on_garbled=self.settings.ocr_force_on_garbled,
                 )
 
-                gemini_ocr_count = 0
-                if self.settings.enable_ocr_fallback and self.settings.allow_gemini_page_ocr_recovery:
-                    remaining_ocr_budget = max(0, self.settings.ingest_gemini_ocr_max_pages - stats.ocr_pages)
+                openai_ocr_count = 0
+                if self.settings.enable_ocr_fallback and self.settings.allow_openai_page_ocr_recovery:
+                    remaining_ocr_budget = max(0, self.settings.ingest_openai_ocr_max_pages - stats.ocr_pages)
                     if remaining_ocr_budget > 0:
-                        pages, gemini_ocr_count = self._recover_pages_with_gemini(
+                        pages, openai_ocr_count = self._recover_pages_with_openai(
                             pdf_path=pdf_path,
                             pages=pages,
                             budget=remaining_ocr_budget,
                         )
 
-                stats.ocr_pages += ocr_count + gemini_ocr_count
+                stats.ocr_pages += ocr_count + openai_ocr_count
                 units = parse_pdf_to_units(pdf_path, pages)
                 normalized_units = self._normalize_units(units)
                 all_records.extend(normalized_units)
@@ -97,7 +97,7 @@ class IngestionService:
                             "chunk_type": record["chunk_type"],
                         }
                     )
-                embeddings = self.gemini.embed_many(vector_docs)
+                embeddings = self.llm.embed_many(vector_docs)
                 self.vectors.upsert(
                     ids=vector_ids,
                     texts=vector_docs,
@@ -157,13 +157,13 @@ class IngestionService:
 
         return records
 
-    def _recover_pages_with_gemini(
+    def _recover_pages_with_openai(
         self,
         pdf_path: Path,
         pages: list[PageText],
         budget: int,
     ) -> tuple[list[PageText], int]:
-        if budget <= 0 or not self.gemini.enabled:
+        if budget <= 0 or not self.llm.enabled:
             return pages, 0
 
         candidates = [
@@ -185,7 +185,7 @@ class IngestionService:
         replacement_text: dict[int, str] = {}
         recovered_count = 0
         for page in recoverable:
-            ocr_text = normalize_text(self.gemini.ocr_pdf_page(str(pdf_path), page.page_number))
+            ocr_text = normalize_text(self.llm.ocr_pdf_page(str(pdf_path), page.page_number))
             if not ocr_text:
                 continue
 
@@ -210,7 +210,7 @@ class IngestionService:
                 PageText(
                     page_number=page.page_number,
                     text=replacement,
-                    extraction_method="gemini_ocr",
+                    extraction_method="openai_ocr",
                     quality_score=max(page.quality_score, 0.65),
                 )
             )

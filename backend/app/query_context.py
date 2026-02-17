@@ -298,7 +298,18 @@ def _granth_aliases(granth: str) -> set[str]:
     aliases.add(base.replace("aa", "a"))
 
     extra: dict[str, list[str]] = {
-        "singaar": ["singar", "sringar", "shringar", "श्रृंगार", "शृंगार", "સિંગાર", "શૃંગાર"],
+        "singaar": [
+            "singar",
+            "sringar",
+            "shringar",
+            "श्रृंगार",
+            "शृंगार",
+            "सिंगार",
+            "श्रीसिंगार",
+            "श्री सिंगार",
+            "સિંગાર",
+            "શૃંગાર",
+        ],
         "kirantan": ["kirtan", "kiratan", "कीर्तन", "કીર્તન"],
         "prakash": ["prkash", "prakas", "प्रकाश", "પ્રકાશ"],
         "ras": ["raas", "ras", "रास", "રાસ"],

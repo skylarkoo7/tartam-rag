@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
-from typing import Any
+import math
+from pathlib import Path
+from typing import Any, Iterable
 
 from .db import RetrievedUnit
 from .text_quality import is_garbled_text
@@ -12,12 +16,38 @@ except Exception:  # pragma: no cover - optional dependency
     OpenAI = None  # type: ignore[misc]
 
 
+def _hash_embedding(text: str, dim: int = 1536) -> list[float]:
+    vector = [0.0] * dim
+    for token in text.lower().split():
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        for i in range(0, min(len(digest), dim), 2):
+            idx = digest[i] % dim
+            vector[idx] += (digest[i + 1] / 255.0) - 0.5
+
+    norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+    return [v / norm for v in vector]
+
+
 class OpenAIClient:
-    def __init__(self, api_key: str | None, chat_model: str):
+    def __init__(
+        self,
+        api_key: str | None,
+        chat_model: str,
+        embedding_model: str,
+        vision_model: str,
+    ):
         self.api_key = api_key
         self.chat_model = chat_model
+        self.embedding_model = embedding_model
+        self.vision_model = vision_model
         self.client: Any | None = None
+
         self.last_generation_error: str | None = None
+        self.last_embedding_error: str | None = None
+        self.last_ocr_error: str | None = None
+        self._embedding_dim: int = 1536
+        self._page_ocr_cache: dict[str, str] = {}
+        self._legacy_decode_cache: dict[str, str] = {}
 
         if api_key and OpenAI:
             try:
@@ -26,6 +56,65 @@ class OpenAIClient:
                 self.client = None
 
         self.enabled = self.client is not None
+
+    @property
+    def provider(self) -> str:
+        return "openai"
+
+    def embed(self, text: str) -> list[float]:
+        value = text.strip()
+        if not value:
+            return _hash_embedding("empty", dim=self._embedding_dim)
+
+        if not self.enabled or self.client is None:
+            return _hash_embedding(value, dim=self._embedding_dim)
+
+        try:
+            response = self.client.embeddings.create(model=self.embedding_model, input=value)
+            data = getattr(response, "data", None) or []
+            if not data:
+                raise ValueError("No embedding returned")
+            vector = [float(v) for v in (getattr(data[0], "embedding", None) or [])]
+            if not vector:
+                raise ValueError("Empty embedding vector")
+            self._embedding_dim = len(vector)
+            self.last_embedding_error = None
+            return vector
+        except Exception as exc:
+            self.last_embedding_error = f"{type(exc).__name__}: {exc}"
+            return _hash_embedding(value, dim=self._embedding_dim)
+
+    def embed_many(self, texts: Iterable[str]) -> list[list[float]]:
+        values = [text.strip() for text in texts]
+        if not values:
+            return []
+
+        if not self.enabled or self.client is None:
+            return [_hash_embedding(item or "empty", dim=self._embedding_dim) for item in values]
+
+        vectors: list[list[float]] = []
+        batch_size = 64
+        for start in range(0, len(values), batch_size):
+            batch = values[start : start + batch_size]
+            try:
+                response = self.client.embeddings.create(model=self.embedding_model, input=batch)
+                data = getattr(response, "data", None) or []
+                if len(data) != len(batch):
+                    raise ValueError("Embedding batch size mismatch")
+
+                sorted_data = sorted(data, key=lambda item: int(getattr(item, "index", 0)))
+                for idx, item in enumerate(sorted_data):
+                    vector = [float(v) for v in (getattr(item, "embedding", None) or [])]
+                    if not vector:
+                        raise ValueError(f"Empty embedding in batch at index {idx}")
+                    self._embedding_dim = len(vector)
+                    vectors.append(vector)
+                self.last_embedding_error = None
+            except Exception as exc:
+                self.last_embedding_error = f"{type(exc).__name__}: {exc}"
+                vectors.extend(_hash_embedding(item or "empty", dim=self._embedding_dim) for item in batch)
+
+        return vectors
 
     def plan_query(
         self,
@@ -200,6 +289,12 @@ class OpenAIClient:
             return ""
         if not self.enabled:
             return value
+
+        key = hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+        cached = self._legacy_decode_cache.get(key)
+        if cached is not None:
+            return cached
+
         prompt = (
             "The following text is mojibake from legacy Hindi/Gujarati font extraction. "
             "Convert it into readable Unicode (Devanagari or Gujarati). "
@@ -210,47 +305,131 @@ class OpenAIClient:
         try:
             recovered = self._complete(prompt, temperature=0.0).strip()
             if not recovered or recovered == value or is_garbled_text(recovered, threshold=0.03):
+                self._legacy_decode_cache[key] = value
                 return value
+            self._legacy_decode_cache[key] = recovered
             return recovered
         except Exception:
+            self._legacy_decode_cache[key] = value
             return value
+
+    def ocr_pdf_page(self, pdf_path: str, page_number: int) -> str:
+        if not self.enabled:
+            return ""
+
+        cache_key = f"{pdf_path}:{page_number}"
+        if cache_key in self._page_ocr_cache:
+            return self._page_ocr_cache[cache_key]
+
+        try:
+            image_b64 = self._pdf_page_to_base64_png(pdf_path=pdf_path, page_number=page_number)
+            if not image_b64:
+                return ""
+            prompt = (
+                "Extract all readable text from this scripture PDF page exactly as visible. "
+                "Keep original line breaks and script. "
+                "Do not summarize or explain. Output only extracted page text."
+            )
+            payload = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": f"data:image/png;base64,{image_b64}"},
+                    ],
+                }
+            ]
+            extracted = self._responses_text(
+                model=self.vision_model,
+                input_payload=payload,
+                temperature=0.0,
+            ).strip()
+            self._page_ocr_cache[cache_key] = extracted
+            self.last_ocr_error = None
+            return extracted
+        except Exception as exc:
+            self.last_ocr_error = f"{type(exc).__name__}: {exc}"
+            return ""
+
+    def _pdf_page_to_base64_png(self, pdf_path: str, page_number: int) -> str:
+        try:
+            import fitz  # type: ignore
+        except Exception as exc:  # pragma: no cover - dependency import
+            raise RuntimeError("pymupdf is required for OpenAI OCR page rendering") from exc
+
+        document = fitz.open(str(Path(pdf_path)))
+        try:
+            page_idx = max(0, int(page_number) - 1)
+            page = document.load_page(page_idx)
+            pix = page.get_pixmap(dpi=260)
+            image_bytes = pix.tobytes("png")
+        finally:
+            document.close()
+        if not image_bytes:
+            return ""
+        return base64.b64encode(image_bytes).decode("ascii")
 
     def _complete(self, prompt: str, temperature: float | None = None) -> str:
         if not self.enabled or self.client is None:
             raise RuntimeError("OpenAI client unavailable")
 
         try:
-            response = self.client.responses.create(
-                model=self.chat_model,
-                input=prompt,
-                temperature=temperature if temperature is not None else 0.2,
-            )
-            text = (getattr(response, "output_text", None) or "").strip()
-            if text:
-                self.last_generation_error = None
-                return text
-        except Exception:
-            pass
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.chat_model,
-                temperature=temperature if temperature is not None else 0.2,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = (
-                response.choices[0].message.content
-                if response and response.choices and response.choices[0].message
-                else ""
-            )
-            text = (text or "").strip()
-            if text:
-                self.last_generation_error = None
-                return text
-            raise ValueError("No text in OpenAI response")
+            text = self._responses_text(model=self.chat_model, input_payload=prompt, temperature=temperature)
+            self.last_generation_error = None
+            return text
         except Exception as exc:
             self.last_generation_error = f"{type(exc).__name__}: {exc}"
             raise
+
+    def _responses_text(self, *, model: str, input_payload: Any, temperature: float | None) -> str:
+        if not self.enabled or self.client is None:
+            raise RuntimeError("OpenAI client unavailable")
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "input": input_payload,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+
+        response = None
+        try:
+            response = self.client.responses.create(**kwargs)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "temperature" in kwargs and (
+                "unsupported" in message or "unknown parameter" in message or "not allowed" in message
+            ):
+                kwargs.pop("temperature", None)
+                response = self.client.responses.create(**kwargs)
+            else:
+                raise
+
+        text = (getattr(response, "output_text", None) or "").strip()
+        if text:
+            return text
+
+        parts: list[str] = []
+        for item in getattr(response, "output", []) or []:
+            content_items = getattr(item, "content", None)
+            if content_items is None and isinstance(item, dict):
+                content_items = item.get("content", [])
+            for content in content_items or []:
+                content_type = getattr(content, "type", None)
+                if content_type is None and isinstance(content, dict):
+                    content_type = content.get("type")
+                if content_type not in {"output_text", "text"}:
+                    continue
+                value = getattr(content, "text", None)
+                if value is None and isinstance(content, dict):
+                    value = content.get("text")
+                if value:
+                    parts.append(str(value))
+
+        merged = "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+        if not merged:
+            raise ValueError("No text in OpenAI response")
+        return merged
 
     def _build_grounded_prompt(
         self,
